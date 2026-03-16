@@ -1,0 +1,6 @@
+#!/usr/bin/env python3
+"""MountBridge entry point — invoked as `mountbridge`."""
+from mountbridge.window import main
+
+if __name__ == "__main__":
+    main()

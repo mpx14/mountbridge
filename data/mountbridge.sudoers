@@ -1,0 +1,19 @@
+# /etc/sudoers.d/mountbridge
+#
+# Allows the owning user to mount and unmount network filesystems
+# (NFS and SMB/CIFS only) without a password prompt.
+#
+# Install:  sudo install -m 440 mountbridge.sudoers /etc/sudoers.d/mountbridge
+# Validate: sudo visudo -cf /etc/sudoers.d/mountbridge
+#
+# Replace %USER% with your actual username, e.g. ben
+# The install.sh script does this substitution automatically.
+
+%USER% ALL=(root) NOPASSWD: \
+    /bin/mount -t nfs *, \
+    /bin/mount -t nfs4 *, \
+    /bin/mount -t cifs *, \
+    /bin/umount /home/%USER%/.mounts/*, \
+    /bin/umount /media/%USER%/*, \
+    /sbin/mount.nfs *, \
+    /sbin/mount.cifs *

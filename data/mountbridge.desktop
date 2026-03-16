@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.1
+Type=Application
+Name=MountBridge
+GenericName=Network Mount Manager
+Comment=Manage NFS, SMB/CIFS and SSHFS network mounts
+Exec=mountbridge %U
+Icon=mountbridge
+Terminal=false
+StartupNotify=true
+Categories=System;Network;FileManager;
+Keywords=mount;nfs;smb;cifs;sshfs;samba;network;share;filesystem;
+MimeType=

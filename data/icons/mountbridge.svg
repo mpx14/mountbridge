@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#5294e2"/>
+      <stop offset="100%" stop-color="#2d6cbf"/>
+    </linearGradient>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#ffffff" stop-opacity="0.18"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0.04"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Drive body -->
+  <rect x="6" y="18" width="52" height="28" rx="6" ry="6" fill="url(#body)"/>
+
+  <!-- Highlight sheen -->
+  <rect x="6" y="18" width="52" height="14" rx="6" ry="6" fill="url(#plate)"/>
+
+  <!-- Network wave lines (left side) -->
+  <g stroke="#ffffff" stroke-width="1.6" stroke-linecap="round" fill="none" opacity="0.80">
+    <path d="M14 28 Q17 24 20 28"/>
+    <path d="M11 28 Q17 20 23 28"/>
+    <path d="M 8 28 Q17 16 26 28"/>
+  </g>
+
+  <!-- LED dot -->
+  <circle cx="50" cy="32" r="3.2" fill="#4fc3a1"/>
+  <circle cx="50" cy="32" r="1.6" fill="#aff3e0"/>
+
+  <!-- Drive slot line -->
+  <rect x="28" y="30" width="16" height="2" rx="1" fill="#ffffff" opacity="0.25"/>
+
+  <!-- Three connector dots bottom -->
+  <circle cx="27" cy="54" r="3" fill="#5294e2"/>
+  <circle cx="37" cy="54" r="3" fill="#5294e2"/>
+  <circle cx="47" cy="54" r="3" fill="#5294e2"/>
+
+  <!-- Connector stems -->
+  <line x1="27" y1="46" x2="27" y2="51" stroke="#5294e2" stroke-width="1.5"/>
+  <line x1="37" y1="46" x2="37" y2="51" stroke="#5294e2" stroke-width="1.5"/>
+  <line x1="47" y1="46" x2="47" y2="51" stroke="#5294e2" stroke-width="1.5"/>
+  <line x1="27" y1="51" x2="47" y2="51" stroke="#5294e2" stroke-width="1.5"/>
+</svg>
