@@ -32,10 +32,10 @@ dependencies = [
 mountbridge = "mountbridge.window:main"
 
 [project.urls]
-Homepage   = "https://github.com/yourusername/mountbridge"
-Repository = "https://github.com/yourusername/mountbridge"
-Issues     = "https://github.com/yourusername/mountbridge/issues"
-Changelog  = "https://github.com/yourusername/mountbridge/blob/main/CHANGELOG.md"
+Homepage   = "https://github.com/mpx14/mountbridge"
+Repository = "https://github.com/mpx14/mountbridge"
+Issues     = "https://github.com/mpx14/mountbridge/issues"
+Changelog  = "https://github.com/mpx14/mountbridge/blob/main/CHANGELOG.md"
 
 [tool.setuptools.packages.find]
 where = ["."]

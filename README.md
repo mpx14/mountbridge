@@ -55,7 +55,7 @@ sudo apt install libappindicator3-1 gir1.2-appindicator3-0.1
 ### Quick install (recommended)
 
 ```bash
-git clone https://github.com/yourusername/mountbridge.git
+git clone https://github.com/mpx14/mountbridge.git
 cd mountbridge
 bash install.sh
 ```
