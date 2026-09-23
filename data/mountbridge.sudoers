@@ -1,13 +1,17 @@
 # /etc/sudoers.d/mountbridge
 #
-# Lets one user run the MountBridge root helper without a password. The helper
-# (/usr/local/libexec/mountbridge-helper) validates every argument itself: it
+# Members of the 'mountbridge' group may run the MountBridge root helper without
+# a password — and nothing else. The helper validates every argument itself: it
 # only mounts nfs/cifs, only under /mnt/mountbridge/<user>/, always with
-# nosuid,nodev, and only unmounts its own mounts.
+# nosuid,nodev, and only unmounts the caller's own mounts.
+#
+# Give a user NFS/SMB access:   sudo adduser <user> mountbridge
+# (takes effect at their next login). SSHFS needs no root and no group.
 #
 # Do NOT grant mount/umount directly: `mount` with wildcard arguments is
 # equivalent to full root (e.g. `mount --bind` over /etc).
 #
-# install.sh substitutes %USER% and validates with `visudo -cf` before installing.
+# @HELPER@ is replaced at install time (.deb: /usr/libexec/mountbridge/…,
+# install.sh: /usr/local/libexec/…).
 
-%USER% ALL=(root) NOPASSWD: /usr/local/libexec/mountbridge-helper
+%mountbridge ALL=(root) NOPASSWD: @HELPER@

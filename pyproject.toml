@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=61", "wheel"]  # 61: first with PEP 621 [project] support
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -35,7 +35,7 @@ dependencies = [
 dev = ["ruff", "mypy", "pytest"]
 
 [project.scripts]
-mountbridge = "mountbridge.window:main"
+mountbridge = "mountbridge.cli:main"
 
 [project.urls]
 Homepage   = "https://github.com/mpx14/mountbridge"

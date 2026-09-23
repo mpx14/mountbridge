@@ -18,7 +18,12 @@ KEYRING_SVC = "mountbridge"
 
 # Root helper for NFS/SMB (see data/mountbridge-helper). NFS/SMB mounts live in a
 # root-owned tree; ~/.mounts/<name> is a convenience symlink into it.
-HELPER          = "/usr/local/libexec/mountbridge-helper"
+# The .deb installs it under /usr/libexec; install.sh (source installs) under
+# /usr/local/libexec. Members of HELPER_GROUP may run it via sudo.
+HELPER_PATHS    = ("/usr/libexec/mountbridge/mountbridge-helper",
+                   "/usr/local/libexec/mountbridge-helper")
+HELPER          = next((p for p in HELPER_PATHS if os.path.exists(p)), HELPER_PATHS[0])
+HELPER_GROUP    = "mountbridge"
 SYS_MOUNT_BASE  = Path("/mnt/mountbridge") / pwd.getpwuid(os.getuid()).pw_name
 
 CSS = """

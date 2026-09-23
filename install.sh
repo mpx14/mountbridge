@@ -6,6 +6,7 @@ APP="MountBridge"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HELPER_DST="/usr/local/libexec/mountbridge-helper"
 SUDOERS_DST="/etc/sudoers.d/mountbridge"
+GROUP="mountbridge"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
@@ -18,6 +19,11 @@ header() { echo -e "\n${BOLD}$*${NC}"; }
 
 header "=== $APP Installer ==="
 [[ $EUID -eq 0 ]] && { err "Do not run as root."; exit 1; }
+if dpkg-query -W -f='${Status}' mountbridge 2>/dev/null | grep -q "install ok installed"; then
+    err "MountBridge is installed as a Debian package. Update it with apt, or remove it"
+    err "(sudo apt remove mountbridge) before using install.sh."
+    exit 1
+fi
 
 # 1. System packages
 header "1. System packages"
@@ -95,10 +101,11 @@ fi
 # 6. Root helper + sudoers (NFS/SMB)
 header "6. NFS/SMB root helper"
 echo "NFS and SMB mounts need root. MountBridge installs a small validating helper"
-echo "at $HELPER_DST and a sudoers rule that allows only that helper."
+echo "at $HELPER_DST, and a sudoers rule that lets members of the '$GROUP' group"
+echo "run only that helper. You ($USER) will be added to the group."
 SUDOERS_TMP="$(mktemp)"
 trap 'rm -f "$SUDOERS_TMP"' EXIT
-sed "s/%USER%/$USER/g" "$REPO_DIR/data/mountbridge.sudoers" > "$SUDOERS_TMP"
+sed "s|@HELPER@|$HELPER_DST|g" "$REPO_DIR/data/mountbridge.sudoers" > "$SUDOERS_TMP"
 echo ""; grep -v '^#' "$SUDOERS_TMP" | sed '/^$/d'; echo ""
 if [[ -f "$SUDOERS_DST" ]] && sudo grep -q "/bin/mount" "$SUDOERS_DST"; then
     warn "An older MountBridge sudoers rule granting mount/umount is installed."
@@ -110,9 +117,17 @@ if [[ "$ans_sudo" =~ ^[Yy]$ ]]; then
         err "Generated sudoers rule failed validation — nothing installed"
         exit 1
     fi
+    getent group "$GROUP" >/dev/null || sudo groupadd --system "$GROUP"
     sudo install -D -o root -g root -m 755 "$REPO_DIR/data/mountbridge-helper" "$HELPER_DST"
     sudo install -o root -g root -m 440 "$SUDOERS_TMP" "$SUDOERS_DST"
     ok "Helper installed at $HELPER_DST; sudoers rule at $SUDOERS_DST"
+    if id -nG "$USER" | tr ' ' '\n' | grep -qx "$GROUP"; then
+        ok "$USER is in the '$GROUP' group"
+    else
+        sudo usermod -aG "$GROUP" "$USER"
+        warn "Added $USER to the '$GROUP' group — log out and back in before mounting NFS/SMB"
+    fi
+    info "Other users get NFS/SMB access with: sudo adduser <user> $GROUP"
 else
     if [[ -f "$SUDOERS_DST" ]] && sudo grep -q "/bin/mount" "$SUDOERS_DST"; then
         read -rp "Remove the old (unsafe) rule anyway? [Y/n] " ans_rm

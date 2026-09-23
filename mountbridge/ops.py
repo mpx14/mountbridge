@@ -5,12 +5,14 @@ SSHFS runs entirely as the user. Nothing here stats a mountpoint to decide
 whether it is mounted: status comes from /proc/self/mountinfo only, so a hung
 server can't block the caller.
 """
+import grp
 import os
+import pwd
 import subprocess
 from pathlib import Path
 from typing import Iterable, List, Optional, Set, Tuple
 
-from .constants import HELPER, SYS_MOUNT_BASE
+from .constants import HELPER, HELPER_GROUP, SYS_MOUNT_BASE
 from .models import LiveMount, MountConfig, MountType
 from .parsing import MountEntry, read_mounts, slugify
 from .store import CredentialError, CredentialStore
@@ -24,6 +26,27 @@ SMB_DEFAULT_OPTS = "file_mode=0644,dir_mode=0755"
 
 def _norm(path: str) -> str:
     return os.path.normpath(os.path.expanduser(path))
+
+
+def helper_access_problem() -> Optional[str]:
+    """Explain why this user can't use the NFS/SMB helper yet, or None if they can.
+
+    Membership is checked in both the group database and the current session:
+    after `adduser`, the new group only applies from the next login.
+    """
+    user = pwd.getpwuid(os.getuid()).pw_name
+    try:
+        group = grp.getgrnam(HELPER_GROUP)
+    except KeyError:
+        return None  # no group: an older per-user sudoers rule may apply; let sudo decide
+    if group.gr_gid in os.getgroups() or os.getgid() == group.gr_gid:
+        return None
+    if user in group.gr_mem:
+        return (f"You were added to the '{HELPER_GROUP}' group, but that only takes effect "
+                "after you log out and back in.")
+    return (f"Your account isn't allowed to mount NFS/SMB shares yet. An administrator "
+            f"needs to run:\n\n    sudo adduser {user} {HELPER_GROUP}\n\n"
+            "and then you need to log out and back in. (SSHFS mounts don't need this.)")
 
 
 def mounted_paths(entries: Optional[Iterable[MountEntry]] = None) -> Set[str]:
@@ -163,11 +186,15 @@ class MountOps:
 
     def _helper(self, args: List[str], stdin: Optional[str] = "") -> Result:
         if not os.path.exists(HELPER):
-            return False, f"{HELPER} is not installed — re-run install.sh"
+            return False, ("The MountBridge NFS/SMB helper is not installed. Install the "
+                           "mountbridge package, or re-run install.sh.")
+        problem = helper_access_problem()
+        if problem:
+            return False, problem
         ok, msg = self._run(["sudo", "-n", HELPER] + args, 60, stdin=stdin)
-        if not ok and "sudo:" in msg and ("password" in msg or "not allowed" in msg):
-            msg = ("Not authorised to run the MountBridge helper. "
-                   "Re-run install.sh and accept the sudoers step.\n\n" + msg)
+        if not ok and "sudo" in msg and ("password" in msg or "not allowed" in msg):
+            msg = (f"Not authorised to run {HELPER}. Check that /etc/sudoers.d/mountbridge "
+                   f"exists and that you're in the '{HELPER_GROUP}' group.\n\n" + msg)
         return ok, msg
 
     def _run(self, cmd, timeout, not_found_msg=None, stdin: Optional[str] = None) -> Result:

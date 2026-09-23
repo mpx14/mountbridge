@@ -698,9 +698,6 @@ class MountBridgeApp(Gtk.Application):
 
 
 def main():
-    if "--version" in sys.argv[1:]:
-        print(f"{APP_NAME} {APP_VERSION}")
-        return
     argv = [a for a in sys.argv if a != "--hidden"]
     app = MountBridgeApp(start_hidden=len(argv) != len(sys.argv))
     sys.exit(app.run(argv))
