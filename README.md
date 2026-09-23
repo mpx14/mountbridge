@@ -15,13 +15,14 @@
 |---|---|
 | **Mount types** | NFS, SMB/CIFS, SSHFS |
 | **Credentials** | Stored in the system keyring (gnome-keyring / KWallet via SecretService — never written to disk in plaintext) |
-| **Live mount detection** | Scans `/proc/mounts` on startup and every 12 s — unmanaged NFS/SMB/SSHFS mounts appear automatically with an **Import** button |
+| **Live mount detection** | Watches the kernel mount table (`/proc/self/mountinfo`) and updates instantly — unmanaged NFS/SMB/SSHFS mounts appear automatically with an **Import** button. Never stats a mountpoint, so a hung server can't freeze the UI |
 | **Network discovery** | SMB broadcast via Avahi mDNS · SMB share listing via `smbclient` · NFS export listing via `showmount` |
-| **Auto-mount** | Per-mount toggle, fires in a background thread at login |
+| **Auto-mount** | Per-mount toggle; runs when MountBridge starts, waiting for the network if needed |
 | **XFCE native** | Uses xfwm4 server-side decorations (no GTK CSD) — title bar, min/max/close behave normally |
-| **System tray** | Ayatana AppIndicator3 with Open/Quit menu; falls back to `Gtk.StatusIcon` |
+| **System tray** | Ayatana AppIndicator3 with Open/Quit menu; falls back to `Gtk.StatusIcon`. Closing the window keeps MountBridge running in the tray |
 | **Notifications** | libnotify desktop notification on mount/unmount success or failure |
-| **Keyboard shortcut** | Ctrl+N — add a new mount from anywhere |
+| **Keyboard shortcuts** | Ctrl+N — add a mount · Ctrl+Q — quit |
+| **Least privilege** | NFS/SMB go through a small validating root helper; SSHFS never uses root |
 
 ---
 
@@ -34,8 +35,8 @@ sudo apt install \
     python3-gi python3-gi-cairo gir1.2-gtk-3.0 \
     gir1.2-notify-0.7 \
     python3-keyring python3-secretstorage \
-    sshfs cifs-utils nfs-common sshpass \
-    avahi-utils samba-common-bin \
+    sshfs cifs-utils nfs-common \
+    avahi-utils smbclient pipx \
     gnome-keyring
 ```
 
@@ -43,9 +44,9 @@ sudo apt install \
 
 ```bash
 # Prefer Ayatana (modern):
-sudo apt install libayatana-appindicator3-1 gir1.2-ayatanaappindicator3-0.1
+sudo apt install gir1.2-ayatanaappindicator3-0.1
 # Or legacy:
-sudo apt install libappindicator3-1 gir1.2-appindicator3-0.1
+sudo apt install gir1.2-appindicator3-0.1
 ```
 
 ---
@@ -62,33 +63,57 @@ bash install.sh
 
 The installer will:
 
-1. Install all `apt` and `pip` dependencies
-2. Install the `mountbridge` package into `~/.local`
+1. Install the `apt` dependencies
+2. Install the `mountbridge` package with `pipx` (its venv can see apt's `python3-gi`)
 3. Create `~/.mounts/` and `~/.config/mountbridge/`
 4. Install the `.desktop` entry and SVG icon
-5. Optionally create an XFCE autostart entry
-6. Optionally install a scoped `sudoers` rule for passwordless NFS/SMB mounting
-7. Optionally enable `user_allow_other` in `/etc/fuse.conf` for SSHFS
+5. Optionally create an XFCE autostart entry (starts minimised to the tray)
+6. Optionally install the NFS/SMB root helper and its sudoers rule (and replace the unsafe rule from v1.1 if present)
 
 ### Manual install
 
 ```bash
-pip install --user --break-system-packages .
+pipx install --system-site-packages .
 mountbridge
 ```
 
+NFS/SMB additionally need the helper and sudoers rule — see below.
+
 ---
 
-## Sudoers (NFS / SMB)
+## NFS / SMB and root
 
-SSHFS is fully userspace — no `sudo` is ever needed. NFS and SMB/CIFS mounts call `sudo mount`, which requires either your password each time or a scoped sudoers rule.
+SSHFS is fully userspace — no root is ever involved. Mounting NFS and SMB/CIFS
+requires root, so MountBridge uses a small root helper,
+`/usr/local/libexec/mountbridge-helper`, and a sudoers rule that allows **only
+that helper**:
 
-The installer offers to install `/etc/sudoers.d/mountbridge` automatically. To do it manually:
+```
+ben ALL=(root) NOPASSWD: /usr/local/libexec/mountbridge-helper
+```
+
+The helper is the security boundary. It:
+
+- mounts only `nfs`, `nfs4` and `cifs`, only at `/mnt/mountbridge/<user>/<name>`
+  (a root-owned tree the user can't tamper with);
+- accepts only allow-listed mount options, and always adds `nosuid,nodev`;
+- forces `uid`/`gid` on CIFS mounts to the calling user;
+- reads SMB credentials from stdin and never from the command line;
+- unmounts only nfs/cifs mounts in the caller's own directory.
+
+`~/.mounts/<name>` is created as a shortcut (symlink) to the real mountpoint.
+
+> **Upgrading from 1.1:** the old rule granted `mount`/`umount` with wildcard
+> arguments, which is equivalent to full root (for example `mount --bind` over
+> `/etc`). `install.sh` detects and replaces it. If you're not re-running the
+> installer, remove it now: `sudo rm /etc/sudoers.d/mountbridge`.
+
+Manual install:
 
 ```bash
-sudo install -m 440 data/mountbridge.sudoers /etc/sudoers.d/mountbridge
-sudo vim /etc/sudoers.d/mountbridge   # replace %USER% with your username
-sudo visudo -cf /etc/sudoers.d/mountbridge
+sudo install -D -o root -g root -m 755 data/mountbridge-helper /usr/local/libexec/mountbridge-helper
+sed "s/%USER%/$USER/g" data/mountbridge.sudoers > /tmp/mb.sudoers
+sudo visudo -cf /tmp/mb.sudoers && sudo install -o root -g root -m 440 /tmp/mb.sudoers /etc/sudoers.d/mountbridge
 ```
 
 ---
@@ -118,7 +143,7 @@ Config lives in `~/.config/mountbridge/mounts.json`. Passwords are **not** store
   "host": "192.168.1.10",
   "remote_path": "/export/media",
   "local_path": "/home/ben/.mounts/home-nas",
-  "options": "rw,soft,timeo=30",
+  "options": "rw,hard",
   "auto_mount": true,
   "created_at": "2024-11-01T09:00:00"
 }
@@ -136,15 +161,16 @@ mountbridge/
 │   ├── models.py          # MountConfig, LiveMount, enums
 │   ├── store.py           # ConfigStore (JSON) + CredentialStore (keyring)
 │   ├── ops.py             # MountOps + LiveMountScanner
+│   ├── parsing.py         # Pure parsers/validators (mountinfo, discovery output)
 │   ├── discovery.py       # Avahi/smbclient/showmount discovery
 │   ├── widgets.py         # GTK widget classes
 │   └── window.py          # MainWindow + MountBridgeApp
-├── bin/
-│   └── mountbridge        # CLI entry point
 ├── data/
+│   ├── mountbridge-helper # Root helper for NFS/SMB (installed to /usr/local/libexec)
 │   ├── mountbridge.desktop
 │   ├── mountbridge.sudoers
 │   └── icons/mountbridge.svg
+├── tests/                 # pytest suite (no display needed)
 ├── install.sh
 ├── Makefile
 ├── pyproject.toml
@@ -156,11 +182,11 @@ mountbridge/
 ## Uninstalling
 
 ```bash
-pip uninstall mountbridge
+pipx uninstall mountbridge
 rm -f ~/.local/share/applications/mountbridge.desktop
 rm -f ~/.local/share/icons/hicolor/scalable/apps/mountbridge.svg
 rm -f ~/.config/autostart/mountbridge.desktop
-sudo rm -f /etc/sudoers.d/mountbridge
+sudo rm -f /etc/sudoers.d/mountbridge /usr/local/libexec/mountbridge-helper
 # Optionally remove config:
 rm -rf ~/.config/mountbridge
 rmdir --ignore-fail-on-non-empty ~/.mounts
