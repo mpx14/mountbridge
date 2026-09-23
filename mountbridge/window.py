@@ -24,9 +24,10 @@ for _ns in ("AyatanaAppIndicator3", "AppIndicator3"):
     except (ValueError, ImportError):
         continue
 
+from . import ops as ops_mod
 from .constants import APP_ID, APP_NAME, APP_VERSION, CSS
 from .discovery import Discovery
-from .models import LiveMount, MountConfig
+from .models import LiveMount, MountConfig, MountType
 from .ops import LiveMountScanner, MountOps, mounted_paths
 from .parsing import read_mounts, valid_host
 from .store import ConfigStore, CredentialError, CredentialStore
@@ -409,7 +410,57 @@ class MainWindow(Gtk.ApplicationWindow):
         return False
 
     def _toggle(self, m: MountConfig):
-        self._run_op(m, "unmount" if self.ops.is_mounted(m) else "mount")
+        if self.ops.is_mounted(m):
+            self._run_op(m, "unmount")
+            return
+        if m.mount_type in (MountType.NFS, MountType.SMB):
+            state = ops_mod.helper_access_state()
+            if state != ops_mod.ACCESS_OK:
+                self._access_dialog(state)
+                return
+        self._run_op(m, "mount")
+
+    def _access_dialog(self, state: str):
+        """Explain missing NFS/SMB access and offer to fix it (administrator password)."""
+        user = ops_mod.current_user()
+        if state == ops_mod.ACCESS_RELOGIN:
+            self._info_dialog("Log out and back in",
+                              f"{user} already has NFS/SMB access, but it only takes effect "
+                              "after you log out of the desktop and back in.")
+            return
+        dlg = Gtk.MessageDialog(transient_for=self, modal=True,
+                                message_type=Gtk.MessageType.QUESTION,
+                                buttons=Gtk.ButtonsType.NONE,
+                                text="NFS/SMB access needed")
+        dlg.format_secondary_text(
+            f"Mounting NFS and SMB shares requires membership of the "
+            f"'{ops_mod.HELPER_GROUP}' group. SSHFS mounts work without it.\n\n"
+            f"Grant access asks for an administrator's password, then adds {user} to "
+            f"the group. You'll need to log out and back in once afterwards.\n\n"
+            f"An administrator can also run:  {ops_mod.manual_grant_command(user)}")
+        dlg.add_button("Cancel", Gtk.ResponseType.CANCEL)
+        grant = dlg.add_button("Grant Access…", Gtk.ResponseType.OK)
+        grant.get_style_context().add_class("suggested-action")
+        answer = dlg.run()
+        dlg.destroy()
+        if answer != Gtk.ResponseType.OK:
+            return
+
+        self.status_lbl.set_text("  Waiting for administrator authentication…")
+
+        def work():
+            ok, msg = ops_mod.grant_helper_access(user)
+            GLib.idle_add(done, ok, msg)
+
+        def done(ok, msg):
+            self._queue_refresh()
+            if ok:
+                self._info_dialog("Access granted — log out and back in", msg)
+            elif msg != "Cancelled.":
+                self._error_dialog("Access not granted", msg)
+            return False
+
+        threading.Thread(target=work, daemon=True).start()
 
     def _open(self, m: MountConfig):
         link, real = os.path.expanduser(m.local_path), self.ops.mountpoint(m)
@@ -508,6 +559,15 @@ class MainWindow(Gtk.ApplicationWindow):
             return dlg.run() == Gtk.ResponseType.YES
         finally:
             dlg.destroy()
+
+    def _info_dialog(self, title: str, body: str):
+        dlg = Gtk.MessageDialog(transient_for=self, modal=True,
+                                message_type=Gtk.MessageType.INFO,
+                                buttons=Gtk.ButtonsType.CLOSE, text=title)
+        dlg.format_secondary_text(body)
+        dlg.run()
+        dlg.destroy()
+        return False
 
     def _error_dialog(self, title: str, body: str):
         dlg = Gtk.MessageDialog(transient_for=self, modal=True,

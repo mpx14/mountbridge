@@ -5,6 +5,7 @@ Maintainer: Ben <ben@mutefx.net>
 Build-Depends:
  debhelper-compat (= 13),
  dh-python,
+ po-debconf,
  pybuild-plugin-pyproject,
  python3-all,
  python3-setuptools,
@@ -33,6 +34,7 @@ Recommends:
  avahi-utils,
  gir1.2-ayatanaappindicator3-0.1 | gir1.2-appindicator3-0.1,
  gnome-keyring | keepassxc | kwalletmanager,
+ pkexec,
  smbclient,
  xdg-utils,
 Description: network mount manager for NFS, SMB/CIFS and SSHFS
@@ -43,5 +45,7 @@ Description: network mount manager for NFS, SMB/CIFS and SSHFS
  local network.
  .
  NFS and SMB mounts go through a small validating root helper that members
- of the "mountbridge" group may run via sudo. To give a user access, run
+ of the "mountbridge" group may run via sudo. The installing user is offered
+ access during installation; other users can request it from within the
+ application (administrator password required) or be added with
  "adduser <user> mountbridge". SSHFS mounts need no privileges.

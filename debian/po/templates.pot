@@ -1,0 +1,42 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the mountbridge package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: mountbridge\n"
+"Report-Msgid-Bugs-To: mountbridge@packages.debian.org\n"
+"POT-Creation-Date: 2026-09-23 17:20+0000\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=CHARSET\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+#. Type: boolean
+#. Description
+#: ../mountbridge.templates:1001
+msgid "Allow ${user} to mount NFS and SMB shares?"
+msgstr ""
+
+#. Type: boolean
+#. Description
+#: ../mountbridge.templates:1001
+msgid ""
+"MountBridge mounts NFS and SMB/CIFS shares through a small root helper that "
+"only members of the \"mountbridge\" group may run."
+msgstr ""
+
+#. Type: boolean
+#. Description
+#: ../mountbridge.templates:1001
+msgid ""
+"If you accept, ${user} is added to that group; it takes effect at their next "
+"login. Other users can be given access later with \"adduser <user> "
+"mountbridge\", or from within MountBridge. SSHFS mounts need no special "
+"access."
+msgstr ""

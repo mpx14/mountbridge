@@ -89,6 +89,22 @@ jobs:
           test ! -e /etc/sudoers.d/mountbridge
           test ! -e /usr/libexec/mountbridge/mountbridge-helper
 
+      - name: Install-time question
+        run: |
+          set -x
+          ingroup() { id -nG "$1" | tr ' ' '\n' | grep -qx mountbridge; }
+          # Installed via sudo by a regular user who answers yes: added.
+          useradd -m asker
+          printf 'yes\n' | SUDO_USER=asker DEBIAN_FRONTEND=teletype \
+            apt-get install -y --no-install-recommends ./mountbridge_*_all.deb
+          ingroup asker
+          apt-get purge -y mountbridge
+          # Unattended install: nobody is added, even with SUDO_USER set.
+          useradd -m quiet
+          SUDO_USER=quiet DEBIAN_FRONTEND=noninteractive \
+            apt-get install -y --no-install-recommends ./mountbridge_*_all.deb
+          if ingroup quiet; then echo "unattended install added a user"; exit 1; fi
+
   release:
     name: Attach .deb to a draft release
     if: startsWith(github.ref, 'refs/tags/v')

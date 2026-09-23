@@ -62,6 +62,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - **Debian package** (`make deb`; built and install-tested in CI on Debian
   12/13/testing and Ubuntu 22.04/24.04). Installs the helper to
   `/usr/libexec/mountbridge/` and grants it to the `mountbridge` group.
+- The installing user is asked (debconf) whether to get NFS/SMB access;
+  unattended installs add nobody. `dpkg-reconfigure mountbridge` asks again.
+- In the app, an NFS/SMB mount without access offers **Grant Access…**, which
+  adds the user to the group via `pkexec` (administrator password).
 - `mountbridge --help`; `--version`/`--help` work without a display.
 
 ### Changed

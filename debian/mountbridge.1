@@ -39,7 +39,13 @@ group may run the helper through
 .BR sudo (8),
 as configured in
 .IR /etc/sudoers.d/mountbridge .
-To give a user access:
+The user who installs the package through
+.BR sudo (8)
+is asked whether to join the group. Otherwise, a user can request access
+from within MountBridge (an administrator's password is required), an
+administrator can run
+.B dpkg\-reconfigure mountbridge
+to be asked again, or add any user with:
 .PP
 .RS
 .B adduser

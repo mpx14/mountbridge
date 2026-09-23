@@ -28,25 +28,70 @@ def _norm(path: str) -> str:
     return os.path.normpath(os.path.expanduser(path))
 
 
-def helper_access_problem() -> Optional[str]:
-    """Explain why this user can't use the NFS/SMB helper yet, or None if they can.
+ACCESS_OK, ACCESS_RELOGIN, ACCESS_NOT_MEMBER = "ok", "relogin", "not-member"
+PKEXEC = "/usr/bin/pkexec"
+ADDUSER = "/usr/sbin/adduser"
 
-    Membership is checked in both the group database and the current session:
-    after `adduser`, the new group only applies from the next login.
+
+def current_user() -> str:
+    return pwd.getpwuid(os.getuid()).pw_name
+
+
+def helper_access_state() -> str:
+    """ok / relogin (in the group database, not yet in this session) / not-member.
+
+    sudo checks the running session's groups, and a new group membership only
+    reaches a session at login — hence the separate 'relogin' state.
     """
-    user = pwd.getpwuid(os.getuid()).pw_name
     try:
         group = grp.getgrnam(HELPER_GROUP)
     except KeyError:
-        return None  # no group: an older per-user sudoers rule may apply; let sudo decide
+        return ACCESS_OK  # no group: an older per-user sudoers rule may apply; let sudo decide
     if group.gr_gid in os.getgroups() or os.getgid() == group.gr_gid:
-        return None
-    if user in group.gr_mem:
+        return ACCESS_OK
+    if current_user() in group.gr_mem:
+        return ACCESS_RELOGIN
+    return ACCESS_NOT_MEMBER
+
+
+def manual_grant_command(user: str) -> str:
+    return f"sudo adduser {user} {HELPER_GROUP}"
+
+
+def helper_access_problem() -> Optional[str]:
+    """Explain why this user can't use the NFS/SMB helper yet, or None if they can."""
+    state = helper_access_state()
+    if state == ACCESS_RELOGIN:
         return (f"You were added to the '{HELPER_GROUP}' group, but that only takes effect "
                 "after you log out and back in.")
-    return (f"Your account isn't allowed to mount NFS/SMB shares yet. An administrator "
-            f"needs to run:\n\n    sudo adduser {user} {HELPER_GROUP}\n\n"
-            "and then you need to log out and back in. (SSHFS mounts don't need this.)")
+    if state == ACCESS_NOT_MEMBER:
+        return (f"Your account isn't allowed to mount NFS/SMB shares yet. An administrator "
+                f"needs to run:\n\n    {manual_grant_command(current_user())}\n\n"
+                "and then you need to log out and back in. (SSHFS mounts don't need this.)")
+    return None
+
+
+def grant_helper_access(user: str) -> Result:
+    """Add `user` to the helper group via pkexec; polkit asks for an administrator's
+    password in the desktop's usual dialog. Blocks until the dialog is answered."""
+    manual = f"\n\nAn administrator can instead run:\n\n    {manual_grant_command(user)}"
+    if not os.path.exists(PKEXEC):
+        return False, "pkexec is not installed." + manual
+    try:
+        r = subprocess.run([PKEXEC, ADDUSER, user, HELPER_GROUP], stdin=subprocess.DEVNULL,
+                           capture_output=True, text=True, timeout=600)
+    except subprocess.TimeoutExpired:
+        return False, "Timed out waiting for authentication." + manual
+    except OSError as e:
+        return False, f"Could not run pkexec: {e}" + manual
+    if r.returncode == 0:
+        return True, f"{user} can now mount NFS/SMB shares after logging out and back in."
+    if r.returncode == 126:
+        return False, "Cancelled."
+    if r.returncode == 127:
+        return False, ("Not authorised, or no authentication agent is running "
+                       "(the desktop's password dialog)." + manual)
+    return False, (r.stderr.strip() or f"adduser failed (exit {r.returncode})") + manual
 
 
 def mounted_paths(entries: Optional[Iterable[MountEntry]] = None) -> Set[str]:

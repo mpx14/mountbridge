@@ -62,18 +62,37 @@ and distributions based on them (Linux Mint, Pop!_OS, …). Download
 
 ```bash
 sudo apt install ./mountbridge_1.2.0_all.deb
-sudo adduser $USER mountbridge      # NFS/SMB access; log out and back in afterwards
 ```
 
 `apt` pulls in all dependencies. The package installs the app, the NFS/SMB root
-helper and a sudoers rule for the `mountbridge` group. On a shared machine, give
-each user who should mount NFS/SMB access with `sudo adduser <user> mountbridge`;
-SSHFS works for everyone without it.
+helper and a sudoers rule for the `mountbridge` group, and asks whether **you**
+(the user running `sudo apt install`) should get NFS/SMB access. Answer yes, then
+log out and back in once. SSHFS works for everyone without any of this.
 
-**Switching from `install.sh` to the package:** first run `pipx uninstall mountbridge`
-(otherwise `~/.local/bin/mountbridge` shadows the packaged `/usr/bin/mountbridge`).
-The package replaces the sudoers rule written by `install.sh` automatically;
-`/usr/local/libexec/mountbridge-helper` can be deleted afterwards.
+Other ways to grant NFS/SMB access — for other users on a shared machine, or if
+you answered no:
+
+- **In MountBridge:** mounting an NFS/SMB share without access offers
+  **Grant Access…**, which asks for an administrator's password.
+- `sudo dpkg-reconfigure mountbridge` asks the question again for you.
+- `sudo adduser <user> mountbridge` for any user.
+
+Each takes effect at that user's next login. Unattended installs
+(`DEBIAN_FRONTEND=noninteractive`) never add anyone.
+
+**Switching from `install.sh` to the package:**
+
+```bash
+pipx uninstall mountbridge            # or ~/.local/bin/mountbridge shadows /usr/bin/mountbridge
+rm -f ~/.local/share/applications/mountbridge.desktop \
+      ~/.local/share/icons/hicolor/scalable/apps/mountbridge.svg
+sudo rm -f /usr/local/libexec/mountbridge-helper
+sed -i 's|^Exec=.*|Exec=mountbridge --hidden|' ~/.config/autostart/mountbridge.desktop  # if you use autostart
+sudo apt install ./mountbridge_1.2.0_all.deb
+```
+
+The package replaces the sudoers rule written by `install.sh` (or by 1.1)
+automatically, without a configuration-file prompt.
 
 ### Build the package yourself
 
