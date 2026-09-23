@@ -36,14 +36,14 @@ cd mountbridge
 sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-3.0 \
                  gir1.2-notify-0.7 python3-keyring
 
-# 3. Install in editable mode
-pip install --user --break-system-packages -e .
+# 3. Create a dev venv that can see apt's python3-gi, with ruff/mypy/pytest
+make install-dev
 
-# 4. Install dev tools
-pip install --user --break-system-packages ruff mypy
+# 4. Run from source
+.venv/bin/mountbridge
 
-# 5. Run from source
-mountbridge
+# 5. Before committing
+make check        # ruff + pytest — the same as CI
 ```
 
 ---
@@ -70,12 +70,17 @@ make fmt     # auto-fix
 | `models.py` | `MountConfig`, `LiveMount`, enums — no GTK imports |
 | `store.py` | JSON config on disk + keyring credential store |
 | `ops.py` | `MountOps` (mount/unmount) + `LiveMountScanner` |
+| `parsing.py` | Pure parsers/validators — mountinfo, discovery output, hostnames |
 | `discovery.py` | Avahi / smbclient / showmount — all async via threads |
 | `widgets.py` | All GTK widget subclasses |
 | `window.py` | `MainWindow`, `MountBridgeApp`, tray, `main()` entry point |
 
-Keep GTK imports out of `models.py`, `store.py` and `ops.py` — those modules
-must remain importable without a display server for unit testing.
+Keep GTK imports out of `models.py`, `parsing.py`, `store.py` and `ops.py` —
+those modules must remain importable without a display server for unit testing.
+
+`data/mountbridge-helper` runs as root and is the security boundary for NFS/SMB.
+Changes to it need a test in `tests/test_helper.py`, and any new mount option
+must be added to its allow-list deliberately.
 
 ---
 
@@ -83,7 +88,7 @@ must remain importable without a display server for unit testing.
 
 1. Branch from `main`: `git checkout -b feature/my-thing`
 2. Keep commits focused — one logical change per commit
-3. Run `make lint` — no new lint errors
+3. Run `make check` — lint and tests must pass
 4. Update `CHANGELOG.md` under `[Unreleased]`
 5. Open the PR against `main`; fill in the PR template
 

@@ -1,0 +1,264 @@
+#!/usr/bin/python3 -I
+"""mountbridge-helper: the only thing MountBridge runs as root.
+
+Installed as root:root 0755 at /usr/local/libexec/mountbridge-helper and
+granted to one user via /etc/sudoers.d/mountbridge. Every argument is treated
+as hostile: this file is the security boundary, not the GUI.
+
+Usage (always via `sudo -n`):
+    mountbridge-helper mount  {nfs|nfs4|cifs} SOURCE NAME [OPTIONS]
+    mountbridge-helper umount NAME [--lazy]
+
+    cifs credentials are read from stdin as `username=`, `password=` and
+    `domain=` lines, and never appear on a command line.
+
+Design:
+  * Mountpoints are fixed at /mnt/mountbridge/<user>/<NAME>. Every directory
+    on that path is created by and owned by root, so the invoking user cannot
+    swap a component for a symlink between validation and mount(2).
+  * Filesystem type, source and options are allow-listed; nosuid,nodev are
+    always appended; uid/gid for cifs are forced to the invoking user.
+  * umount only acts on nfs/cifs mounts under the caller's own directory.
+"""
+import os
+import pwd
+import re
+import stat
+import subprocess
+import sys
+import tempfile
+
+BASE = "/mnt/mountbridge"
+RUN_DIR = "/run/mountbridge"
+SAFE_ENV = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C"}
+FSTYPES = {"nfs", "nfs4", "cifs"}
+
+NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+USER_RE = re.compile(r"^[a-z_][a-z0-9_.-]{0,31}\$?$")
+_LABEL = r"[A-Za-z0-9_](?:[A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?"
+HOST_RE = re.compile(rf"^(?:{_LABEL}(?:\.{_LABEL})*\.?|\[[0-9A-Fa-f:.]+\])$")
+CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+NUM = r"\d{1,8}"
+COMMON_FLAGS = {"ro", "rw", "noatime", "relatime", "nodiratime", "noexec", "exec",
+                "sync", "async", "_netdev", "nofail"}
+NFS_FLAGS = {"soft", "hard", "softerr", "intr", "nointr", "lock", "nolock", "ac", "noac",
+             "cto", "nocto", "sharecache", "nosharecache", "resvport", "noresvport",
+             "fsc", "nofsc", "rdirplus", "nordirplus"}
+NFS_KV = {
+    "vers": r"[34](\.[0-2])?|2", "nfsvers": r"[34](\.[0-2])?|2",
+    "proto": r"(tcp|udp|rdma)6?", "mountproto": r"(tcp|udp)6?",
+    "port": NUM, "mountport": NUM, "timeo": NUM, "retrans": NUM, "rsize": NUM,
+    "wsize": NUM, "actimeo": NUM, "acregmin": NUM, "acregmax": NUM, "acdirmin": NUM,
+    "acdirmax": NUM, "nconnect": r"\d{1,2}",
+    "sec": r"(sys|none|krb5|krb5i|krb5p)(:(sys|none|krb5|krb5i|krb5p))*",
+    "lookupcache": r"all|none|pos|positive",
+}
+CIFS_FLAGS = {"guest", "perm", "noperm", "brl", "nobrl", "seal", "serverino",
+              "noserverino", "unix", "nounix", "mfsymlinks", "mapposix", "nomapposix",
+              "forceuid", "forcegid", "nocase", "hard", "soft", "handlecache",
+              "nohandlecache", "sfu", "nosharesock", "resilienthandles"}
+CIFS_KV = {
+    "vers": r"1\.0|2\.0|2\.1|3|3\.0|3\.02|3\.0\.2|3\.1\.1|3\.11|default",
+    "sec": r"none|krb5i?|ntlmv2i?|ntlmsspi?",
+    "file_mode": r"0?[0-7]{3,4}", "dir_mode": r"0?[0-7]{3,4}",
+    "iocharset": r"[A-Za-z0-9_-]{1,32}", "cache": r"strict|none|loose|singleclient|ro",
+    "rsize": NUM, "wsize": NUM, "actimeo": NUM, "echo_interval": NUM, "port": NUM,
+    "uid": NUM, "gid": NUM,
+}
+# Never accepted from the caller, whatever the fstype.
+FORBIDDEN = {"suid", "dev", "remount", "bind", "rbind", "move", "user", "users",
+             "owner", "group", "credentials", "username", "password", "pass",
+             "helper", "context", "fscontext", "defcontext", "rootcontext"}
+
+
+class Refused(Exception):
+    pass
+
+
+# ── Validation (pure; unit-tested) ───────────────────────────────────────────
+
+def check_name(name):
+    if not NAME_RE.match(name or ""):
+        raise Refused(f"invalid mount name: {name!r}")
+    return name
+
+
+def check_source(fstype, source):
+    if CTRL_RE.search(source):
+        raise Refused("control characters in source")
+    if fstype in ("nfs", "nfs4"):
+        m = re.match(r"^(\[[0-9A-Fa-f:.]+\]|[^:/\s]+):(/.*)$", source)
+        if not m:
+            raise Refused("nfs source must be HOST:/path")
+        host = m.group(1)
+    else:
+        m = re.match(r"^//([^/\\\s]+)/([^\\]+)$", source)
+        if not m:
+            raise Refused("cifs source must be //HOST/share[/path]")
+        host = m.group(1)
+    if not HOST_RE.match(host):
+        raise Refused(f"invalid host: {host!r}")
+    return source
+
+
+def check_options(fstype, options, uid, gid):
+    """Return the validated option list with nosuid,nodev (and cifs uid/gid) enforced."""
+    flags = COMMON_FLAGS | (NFS_FLAGS if fstype != "cifs" else CIFS_FLAGS)
+    kv = NFS_KV if fstype != "cifs" else CIFS_KV
+    out = []
+    for opt in filter(None, (o.strip() for o in (options or "").split(","))):
+        key, eq, val = opt.partition("=")
+        if key in FORBIDDEN or key.startswith(("x-", "X-")):
+            raise Refused(f"option not allowed: {key}")
+        if not eq:
+            if key not in flags:
+                raise Refused(f"option not allowed: {key}")
+        elif key in kv and re.fullmatch(kv[key], val):
+            if key in ("uid", "gid") and int(val) != (uid if key == "uid" else gid):
+                raise Refused(f"{key} must be your own")
+        else:
+            raise Refused(f"option not allowed or bad value: {opt}")
+        out.append(opt)
+    if fstype == "cifs":
+        out = [o for o in out if not o.startswith(("uid=", "gid="))]
+        out += [f"uid={uid}", f"gid={gid}"]
+    return out + ["nosuid", "nodev"]
+
+
+def parse_creds(text):
+    """Parse cifs credentials from stdin into a mount.cifs credentials-file body."""
+    fields = {}
+    for line in text.splitlines():
+        key, eq, val = line.partition("=")
+        if not eq:
+            continue
+        if key not in ("username", "password", "domain"):
+            raise Refused(f"unknown credential field: {key}")
+        if key != "password" and CTRL_RE.search(val):
+            raise Refused(f"control characters in {key}")
+        fields[key] = val
+    return "".join(f"{k}={v}\n" for k, v in fields.items())
+
+
+# ── Filesystem helpers (root side) ───────────────────────────────────────────
+
+def mounted_at(path):
+    """fstype mounted at path, from mountinfo, without stat'ing anything."""
+    fstype = None
+    with open("/proc/self/mountinfo", encoding="utf-8", errors="surrogateescape") as f:
+        for line in f:
+            pre, _, post = line.partition(" - ")
+            left, right = pre.split(), post.split()
+            if len(left) > 4 and right:
+                mp = re.sub(r"\\([0-7]{3})", lambda m: chr(int(m.group(1), 8)), left[4])
+                if mp == path:
+                    fstype = right[0]   # last one wins (stacked mounts)
+    return fstype
+
+
+def ensure_root_dir(path, mode=0o755):
+    try:
+        os.mkdir(path, mode)
+        os.chmod(path, mode)
+    except FileExistsError:
+        pass
+    st = os.lstat(path)
+    if not stat.S_ISDIR(st.st_mode) or st.st_uid != 0 or st.st_mode & 0o022:
+        raise Refused(f"unsafe directory (must be root-owned, not group/world-writable): {path}")
+
+
+def caller():
+    try:
+        uid, gid = int(os.environ["SUDO_UID"]), int(os.environ["SUDO_GID"])
+    except (KeyError, ValueError):
+        raise Refused("must be run via sudo by a regular user") from None
+    if uid == 0:
+        raise Refused("refusing to run for root")
+    name = pwd.getpwuid(uid).pw_name
+    if not USER_RE.match(name):
+        raise Refused(f"unsupported username: {name!r}")
+    return uid, gid, name
+
+
+def user_dir(user):
+    if os.lstat("/mnt").st_uid != 0:
+        raise Refused("/mnt is not root-owned")
+    ensure_root_dir(BASE)
+    d = os.path.join(BASE, user)
+    ensure_root_dir(d)
+    return d
+
+
+def run(cmd, stdin=None):
+    r = subprocess.run(cmd, env=SAFE_ENV, input=stdin, capture_output=True,
+                       text=True, timeout=90)
+    sys.stdout.write(r.stdout)
+    sys.stderr.write(r.stderr)
+    return r.returncode
+
+
+# ── Commands ─────────────────────────────────────────────────────────────────
+
+def do_mount(fstype, source, name, options, stdin_text):
+    if fstype not in FSTYPES:
+        raise Refused(f"filesystem type not allowed: {fstype}")
+    uid, gid, user = caller()
+    check_name(name)
+    check_source(fstype, source)
+    opts = check_options(fstype, options, uid, gid)
+    target = os.path.join(user_dir(user), name)
+    if mounted_at(target):
+        raise Refused(f"already mounted: {target}")
+    ensure_root_dir(target)
+
+    cred_path = None
+    try:
+        if fstype == "cifs":
+            body = parse_creds(stdin_text)
+            if "username=" in body:
+                ensure_root_dir(RUN_DIR, 0o700)
+                fd, cred_path = tempfile.mkstemp(dir=RUN_DIR, prefix="cred-")
+                with os.fdopen(fd, "w") as f:
+                    f.write(body)
+                opts.append(f"credentials={cred_path}")
+            elif "guest" not in opts:
+                opts.append("guest")
+        return run(["mount", "-t", fstype, "-o", ",".join(opts), "--", source, target])
+    finally:
+        if cred_path:
+            os.unlink(cred_path)
+
+
+def do_umount(name, lazy):
+    _, _, user = caller()
+    check_name(name)
+    target = os.path.join(BASE, user, name)
+    fstype = mounted_at(target)
+    if fstype not in FSTYPES:
+        raise Refused(f"no nfs/cifs mount at {target}")
+    return run(["umount"] + (["-l"] if lazy else []) + ["--", target])
+
+
+def main(argv):
+    os.umask(0o022)
+    try:
+        if len(argv) in (4, 5) and argv[0] == "mount":
+            stdin_text = sys.stdin.read(8192) if argv[1] == "cifs" else ""
+            opts = argv[4] if len(argv) == 5 else ""
+            return do_mount(argv[1], argv[2], argv[3], opts, stdin_text)
+        if len(argv) in (2, 3) and argv[0] == "umount":
+            if len(argv) == 3 and argv[2] != "--lazy":
+                raise Refused("usage: umount NAME [--lazy]")
+            return do_umount(argv[1], len(argv) == 3)
+        raise Refused("usage: mount {nfs|nfs4|cifs} SOURCE NAME [OPTIONS] | umount NAME [--lazy]")
+    except Refused as e:
+        print(f"mountbridge-helper: {e}", file=sys.stderr)
+        return 2
+    except subprocess.TimeoutExpired:
+        print("mountbridge-helper: timed out", file=sys.stderr)
+        return 124
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

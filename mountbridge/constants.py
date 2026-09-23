@@ -1,14 +1,25 @@
 """Application-wide constants, paths and stylesheet."""
+import os
+import pwd
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 APP_ID      = "net.mutefx.mountbridge"
 APP_NAME    = "MountBridge"
-APP_VERSION = "1.1.0"
+try:
+    APP_VERSION = version("mountbridge")   # single source of truth: pyproject.toml
+except PackageNotFoundError:               # running from a source tree without installing
+    APP_VERSION = "unknown"
 
 CONFIG_DIR  = Path.home() / ".config" / "mountbridge"
 MOUNTS_DIR  = Path.home() / ".mounts"
 CONFIG_FILE = CONFIG_DIR / "mounts.json"
 KEYRING_SVC = "mountbridge"
+
+# Root helper for NFS/SMB (see data/mountbridge-helper). NFS/SMB mounts live in a
+# root-owned tree; ~/.mounts/<name> is a convenience symlink into it.
+HELPER          = "/usr/local/libexec/mountbridge-helper"
+SYS_MOUNT_BASE  = Path("/mnt/mountbridge") / pwd.getpwuid(os.getuid()).pw_name
 
 CSS = """
 /* -- Base ------------------------------------------------- */
