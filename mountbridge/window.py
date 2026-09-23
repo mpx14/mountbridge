@@ -1,55 +1,92 @@
 """Main application window and Gtk.Application entry point."""
+import importlib
 import os
+import subprocess
 import sys
 import threading
 import uuid
 from datetime import datetime
+from typing import Callable, Dict, Optional, Set
 
 import gi
+
 gi.require_version("Gtk", "3.0")
+gi.require_version("Gdk", "3.0")
 gi.require_version("Notify", "0.7")
-from gi.repository import Gtk, GLib, Gdk, Notify
+from gi.repository import Gdk, Gio, GLib, Gtk, Notify
 
-HAS_INDICATOR = False
-try:
-    gi.require_version("AyatanaAppIndicator3", "0.1")
-    from gi.repository import AyatanaAppIndicator3 as AppIndicator3
-    HAS_INDICATOR = True
-except Exception:
+AppIndicator3 = None
+for _ns in ("AyatanaAppIndicator3", "AppIndicator3"):
     try:
-        gi.require_version("AppIndicator3", "0.1")
-        from gi.repository import AppIndicator3
-        HAS_INDICATOR = True
-    except Exception:
-        pass
+        gi.require_version(_ns, "0.1")
+        AppIndicator3 = importlib.import_module(f"gi.repository.{_ns}")
+        break
+    except (ValueError, ImportError):
+        continue
 
-from .constants import APP_ID, APP_NAME, APP_VERSION, CSS, MOUNTS_DIR
-from .models import MountConfig, LiveMount
-from .store import ConfigStore, CredentialStore
-from .ops import MountOps, LiveMountScanner
+from .constants import APP_ID, APP_NAME, CSS
 from .discovery import Discovery
+from .models import LiveMount, MountConfig
+from .ops import LiveMountScanner, MountOps, mounted_paths
+from .parsing import read_mounts, valid_host
+from .store import ConfigStore, CredentialStore
 from .widgets import (
-    MountDialog, MountCard, SectionRow, UnmanagedMountCard, DiscoveryPanel
+    DiscoveryPanel,
+    MountCard,
+    MountDialog,
+    SectionRow,
+    UnmanagedMountCard,
+    default_local_path,
 )
+
+
+def _mount_monitor():
+    """GIO's mountinfo watcher: GioUnix.MountMonitor (GLib ≥ 2.80) or Gio.UnixMountMonitor."""
+    try:
+        gi.require_version("GioUnix", "2.0")
+        from gi.repository import GioUnix
+        return GioUnix.MountMonitor.get()
+    except (ValueError, ImportError, AttributeError):
+        pass
+    try:
+        return Gio.UnixMountMonitor.get()
+    except AttributeError:
+        return None
+
+
+def notify(title: str, body: str, ok: bool):
+    if not Notify.is_initted():
+        return
+    icon = "drive-harddisk-symbolic" if ok else "dialog-error-symbolic"
+    try:
+        Notify.Notification.new(title, body, icon).show()
+    except GLib.Error:
+        pass  # no notification daemon running
 
 
 class MainWindow(Gtk.ApplicationWindow):
     def __init__(self, app, cfg: ConfigStore, creds: CredentialStore, ops: MountOps):
         super().__init__(application=app)
-        self.cfg         = cfg
-        self.creds       = creds
-        self.ops         = ops
-        self.disc        = Discovery()
-        self.scanner     = LiveMountScanner()
+        self.cfg = cfg
+        self.creds = creds
+        self.ops = ops
+        self.disc = Discovery()
+        self.scanner = LiveMountScanner()
         self.filter_type = "all"
+        self._busy: Set[str] = set()                 # mount ids with an operation running
+        self._cards: Dict[str, MountCard] = {}
+        self._unmanaged_key: tuple = ()
+        self._refresh_queued = False
 
         self._apply_css()
         self._build()
         self._populate()
+        self._watch_mounts()
         self._auto_mount()
-        GLib.timeout_add_seconds(12, self._tick)
+        if cfg.load_warning:
+            GLib.idle_add(self._error_dialog, "Configuration reset", cfg.load_warning)
 
-    # ── CSS ───────────────────────────────────────────────────────────────────
+    # ── CSS ──────────────────────────────────────────────────────────────────
 
     def _apply_css(self):
         self.get_style_context().add_class("mb-window")
@@ -58,11 +95,10 @@ class MainWindow(Gtk.ApplicationWindow):
         Gtk.StyleContext.add_provider_for_screen(
             Gdk.Screen.get_default(), p, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
         )
-        Notify.init(APP_NAME)
         self.set_title(APP_NAME)
         self.set_default_size(920, 600)
 
-    # ── Build ─────────────────────────────────────────────────────────────────
+    # ── Build ────────────────────────────────────────────────────────────────
 
     def _build(self):
         # Plain vbox — lets xfwm4 draw native window decorations (no CSD).
@@ -73,23 +109,14 @@ class MainWindow(Gtk.ApplicationWindow):
         tb.get_style_context().add_class("mb-toolbar")
         vbox.pack_start(tb, False, False, 0)
 
-        add_btn = Gtk.Button()
-        add_btn.set_image(
-            Gtk.Image.new_from_icon_name("list-add-symbolic", Gtk.IconSize.SMALL_TOOLBAR)
-        )
-        add_btn.set_tooltip_text("Add Mount (Ctrl+N)")
-        add_btn.set_relief(Gtk.ReliefStyle.NONE)
-        add_btn.connect("clicked", self._do_add)
-        tb.pack_start(add_btn, False, False, 0)
-
-        ref_btn = Gtk.Button()
-        ref_btn.set_image(
-            Gtk.Image.new_from_icon_name("view-refresh-symbolic", Gtk.IconSize.SMALL_TOOLBAR)
-        )
-        ref_btn.set_tooltip_text("Refresh Status")
-        ref_btn.set_relief(Gtk.ReliefStyle.NONE)
-        ref_btn.connect("clicked", self._refresh_all)
-        tb.pack_start(ref_btn, False, False, 0)
+        for icon, tip, cb in (("list-add-symbolic", "Add Mount (Ctrl+N)", self._do_add),
+                              ("view-refresh-symbolic", "Refresh Status", self._populate)):
+            b = Gtk.Button()
+            b.set_image(Gtk.Image.new_from_icon_name(icon, Gtk.IconSize.SMALL_TOOLBAR))
+            b.set_tooltip_text(tip)
+            b.set_relief(Gtk.ReliefStyle.NONE)
+            b.connect("clicked", lambda *_, cb=cb: cb())
+            tb.pack_start(b, False, False, 0)
 
         title_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         title_box.set_valign(Gtk.Align.CENTER)
@@ -106,25 +133,18 @@ class MainWindow(Gtk.ApplicationWindow):
         self.search_e = Gtk.SearchEntry()
         self.search_e.set_placeholder_text("Search…")
         self.search_e.set_size_request(180, -1)
-        self.search_e.connect("search-changed", lambda _: self.lb.invalidate_filter())
         tb.pack_start(self.search_e, False, False, 0)
-
-        self.connect("key-press-event", self._key_press)
 
         root = Gtk.Box()
         root.set_vexpand(True)
         vbox.pack_start(root, True, True, 0)
 
-        root.pack_start(self._build_sidebar(), False, False, 0)
-
         self.stack = Gtk.Stack()
         self.stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
         self.stack.set_transition_duration(120)
-        root.pack_start(self.stack, True, True, 0)
 
         mp = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.stack.add_named(mp, "mounts")
-
         scroll = Gtk.ScrolledWindow()
         scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         scroll.set_vexpand(True)
@@ -134,13 +154,17 @@ class MainWindow(Gtk.ApplicationWindow):
         self.lb.set_selection_mode(Gtk.SelectionMode.NONE)
         self.lb.set_filter_func(self._filter)
         scroll.add(self.lb)
+        self.search_e.connect("search-changed", lambda _: self.lb.invalidate_filter())
 
         self.status_lbl = Gtk.Label(label="", xalign=0)
         self.status_lbl.get_style_context().add_class("mb-statusbar")
         mp.pack_start(self.status_lbl, False, False, 0)
 
-        dp = DiscoveryPanel(self.disc, self._add_discovered)
-        self.stack.add_named(dp, "discovery")
+        self.stack.add_named(DiscoveryPanel(self.disc, self._add_discovered), "discovery")
+
+        # Sidebar last: its row-selected handler touches self.lb / self.stack.
+        root.pack_start(self._build_sidebar(), False, True, 0)
+        root.pack_start(self.stack, True, True, 0)
 
         vbox.show_all()
         self.stack.set_visible_child_name("mounts")
@@ -150,13 +174,24 @@ class MainWindow(Gtk.ApplicationWindow):
         sb = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         sb.get_style_context().add_class("mb-sidebar")
 
-        def section(parent, text):
-            l = Gtk.Label(label=text, xalign=0)
-            l.get_style_context().add_class("mb-section-label")
-            parent.pack_start(l, False, False, 0)
+        def section(text):
+            lbl = Gtk.Label(label=text, xalign=0)
+            lbl.get_style_context().add_class("mb-section-label")
+            sb.pack_start(lbl, False, False, 0)
 
-        section(sb, "MOUNTS")
+        def nav_row(icon, label):
+            row = Gtk.ListBoxRow()
+            box = Gtk.Box(spacing=10)
+            box.get_style_context().add_class("mb-nav-row")
+            row.add(box)
+            box.pack_start(Gtk.Image.new_from_icon_name(icon, Gtk.IconSize.SMALL_TOOLBAR),
+                           False, False, 0)
+            lw = Gtk.Label(label=label, xalign=0)
+            lw.set_hexpand(True)
+            box.pack_start(lw, True, True, 0)
+            return row, box
 
+        section("MOUNTS")
         self.nav_lb = Gtk.ListBox()
         self.nav_lb.set_selection_mode(Gtk.SelectionMode.SINGLE)
         self.nav_lb.connect("row-selected", self._nav_selected)
@@ -164,23 +199,13 @@ class MainWindow(Gtk.ApplicationWindow):
 
         self._nav_rows = []
         for icon, label, key in [
-            ("drive-harddisk-symbolic",    "All Mounts", "all"),
-            ("network-server-symbolic",    "NFS",        "nfs"),
-            ("network-workgroup-symbolic", "SMB / CIFS", "smb"),
-            ("utilities-terminal-symbolic","SSHFS",      "sshfs"),
+            ("drive-harddisk-symbolic",     "All Mounts", "all"),
+            ("network-server-symbolic",     "NFS",        "nfs"),
+            ("network-workgroup-symbolic",  "SMB / CIFS", "smb"),
+            ("utilities-terminal-symbolic", "SSHFS",      "sshfs"),
         ]:
-            row = Gtk.ListBoxRow()
+            row, box = nav_row(icon, label)
             row._key = key
-            box = Gtk.Box(spacing=10)
-            box.get_style_context().add_class("mb-nav-row")
-            row.add(box)
-            box.pack_start(
-                Gtk.Image.new_from_icon_name(icon, Gtk.IconSize.SMALL_TOOLBAR),
-                False, False, 0,
-            )
-            lw = Gtk.Label(label=label, xalign=0)
-            lw.set_hexpand(True)
-            box.pack_start(lw, True, True, 0)
             cl = Gtk.Label(label="0")
             cl.get_style_context().add_class("mb-badge")
             box.pack_start(cl, False, False, 0)
@@ -193,96 +218,109 @@ class MainWindow(Gtk.ApplicationWindow):
         sep.set_margin_bottom(4)
         sb.pack_start(sep, False, False, 0)
 
-        section(sb, "TOOLS")
-
-        tools_lb = Gtk.ListBox()
-        tools_lb.set_selection_mode(Gtk.SelectionMode.SINGLE)
-        tools_lb.connect("row-selected", self._tools_selected)
-        sb.pack_start(tools_lb, False, False, 0)
-
-        drow = Gtk.ListBoxRow()
-        dbox = Gtk.Box(spacing=10)
-        dbox.get_style_context().add_class("mb-nav-row")
-        drow.add(dbox)
-        dbox.pack_start(
-            Gtk.Image.new_from_icon_name("network-wireless-symbolic", Gtk.IconSize.SMALL_TOOLBAR),
-            False, False, 0,
-        )
-        dbox.pack_start(Gtk.Label(label="Discover", xalign=0), True, True, 0)
-        tools_lb.add(drow)
+        section("TOOLS")
+        self.tools_lb = Gtk.ListBox()
+        self.tools_lb.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        self.tools_lb.connect("row-selected", self._tools_selected)
+        sb.pack_start(self.tools_lb, False, False, 0)
+        drow, _ = nav_row("network-wireless-symbolic", "Discover")
+        self.tools_lb.add(drow)
 
         sb.show_all()
         return sb
 
-    # ── Sidebar ───────────────────────────────────────────────────────────────
+    # ── Sidebar ──────────────────────────────────────────────────────────────
 
-    def _nav_selected(self, lb, row):
-        if row and hasattr(self, "lb"):
+    def _nav_selected(self, _lb, row):
+        if row:
+            self.tools_lb.unselect_all()
             self.filter_type = row._key
             self.lb.invalidate_filter()
             self.stack.set_visible_child_name("mounts")
 
-    def _tools_selected(self, lb, row):
+    def _tools_selected(self, _lb, row):
         if row:
             self.nav_lb.unselect_all()
             self.stack.set_visible_child_name("discovery")
 
-    # ── Filter ────────────────────────────────────────────────────────────────
+    def _show_mounts(self):
+        self.nav_lb.select_row(self._nav_rows[0])
+
+    # ── Filter ───────────────────────────────────────────────────────────────
 
     def _filter(self, row):
-        if isinstance(row, SectionRow):
-            return True
         if isinstance(row, UnmanagedMountCard):
-            lm = row.lm
-            if self.filter_type != "all" and lm.mount_type != self.filter_type:
-                return False
-            if not hasattr(self, "search_e"):
-                return True
-            q = self.search_e.get_text().lower()
-            return not q or (
-                q in lm.host.lower()
-                or q in lm.remote_path.lower()
-                or q in lm.local_path.lower()
-            )
-        if not isinstance(row, MountCard):
+            mtype, fields = row.lm.mount_type, (row.lm.host, row.lm.remote_path, row.lm.local_path)
+        elif isinstance(row, MountCard):
+            m = row.mount
+            mtype, fields = m.mount_type, (m.name, m.host, m.remote_path)
+        else:
             return True
-        m = row.mount
-        if self.filter_type != "all" and m.mount_type != self.filter_type:
+        if self.filter_type != "all" and mtype != self.filter_type:
             return False
-        if not hasattr(self, "search_e"):
-            return True
         q = self.search_e.get_text().lower()
-        return not q or (
-            q in m.name.lower()
-            or q in m.host.lower()
-            or q in m.remote_path.lower()
-        )
+        return not q or any(q in f.lower() for f in fields)
 
-    # ── Populate ──────────────────────────────────────────────────────────────
+    # ── Populate / refresh ───────────────────────────────────────────────────
+
+    def _known_paths(self) -> Set[str]:
+        return {self.ops.mountpoint(m) for m in self.cfg.mounts}
 
     def _populate(self):
+        """Rebuild the list. Only on config changes or when unmanaged mounts come and go."""
         for c in self.lb.get_children():
             self.lb.remove(c)
+        self._cards.clear()
 
-        managed = self.cfg.mounts
-        for m in managed:
-            self.lb.add(MountCard(m, self.ops, self._do_edit, self._do_delete))
+        entries = read_mounts()
+        mounted = mounted_paths(entries)
+        for m in self.cfg.mounts:
+            card = MountCard(m, self._toggle, self._open, self._do_edit, self._do_delete)
+            card.update(self.ops.is_mounted(m, mounted), m.id in self._busy)
+            self._cards[m.id] = card
+            self.lb.add(card)
 
-        known_paths = {os.path.realpath(m.local_path) for m in managed}
-        unmanaged   = self.scanner.scan(known_paths)
-
+        unmanaged = self.scanner.scan(self._known_paths(), entries)
+        self._unmanaged_key = tuple(sorted(lm.local_path for lm in unmanaged))
         if unmanaged:
             self.lb.add(SectionRow("UNMANAGED LIVE MOUNTS"))
             for lm in unmanaged:
-                self.lb.add(
-                    UnmanagedMountCard(lm, self.ops, self._import_live, self._populate)
-                )
-
-        if not managed and not unmanaged:
+                self.lb.add(UnmanagedMountCard(lm, self._import_live, self._open_path,
+                                               self._unmount_live))
+        if not self.cfg.mounts and not unmanaged:
             self._empty_state()
 
         self.lb.show_all()
-        self._update_counts(unmanaged)
+        self._update_counts(mounted, unmanaged)
+
+    def _refresh(self):
+        """Cheap status update: reads mountinfo once, updates cards in place."""
+        self._refresh_queued = False
+        entries = read_mounts()
+        mounted = mounted_paths(entries)
+        unmanaged = self.scanner.scan(self._known_paths(), entries)
+        if tuple(sorted(lm.local_path for lm in unmanaged)) != self._unmanaged_key:
+            self._populate()
+            return False
+        for m in self.cfg.mounts:
+            card = self._cards.get(m.id)
+            if card:
+                card.update(self.ops.is_mounted(m, mounted), m.id in self._busy)
+        self._update_counts(mounted, unmanaged)
+        return False
+
+    def _queue_refresh(self, *_):
+        if not self._refresh_queued:
+            self._refresh_queued = True
+            GLib.idle_add(self._refresh)
+
+    def _watch_mounts(self):
+        self._monitor = _mount_monitor()
+        if self._monitor:
+            self._monitor.connect("mounts-changed", self._queue_refresh)
+        # Safety net (and the only mechanism if no monitor is available).
+        GLib.timeout_add_seconds(30 if self._monitor else 5,
+                                 lambda: self._queue_refresh() or True)
 
     def _empty_state(self):
         row = Gtk.ListBoxRow()
@@ -298,235 +336,329 @@ class MainWindow(Gtk.ApplicationWindow):
         icon.get_style_context().add_class("mb-empty-icon")
         icon.set_pixel_size(80)
         box.pack_start(icon, False, False, 0)
-
         t = Gtk.Label(label="No mounts configured yet")
         t.get_style_context().add_class("mb-empty-title")
         box.pack_start(t, False, False, 0)
-
-        s = Gtk.Label(
-            label="Add an NFS export, SMB share, or SSHFS connection\nto get started.",
-            justify=Gtk.Justification.CENTER,
-        )
+        s = Gtk.Label(label="Add an NFS export, SMB share, or SSHFS connection\nto get started.",
+                      justify=Gtk.Justification.CENTER)
         s.get_style_context().add_class("mb-empty-sub")
         box.pack_start(s, False, False, 0)
-
         btn = Gtk.Button(label="  + Add Your First Mount  ")
         btn.get_style_context().add_class("suggested-action")
         btn.set_halign(Gtk.Align.CENTER)
-        btn.connect("clicked", self._do_add)
+        btn.connect("clicked", lambda _: self._do_add())
         box.pack_start(btn, False, False, 0)
-
         self.lb.add(row)
 
-    def _update_counts(self, unmanaged: list = None):
-        unmanaged = unmanaged or []
-        counts    = {"all": 0, "nfs": 0, "smb": 0, "sshfs": 0}
-        mounted   = 0
+    def _update_counts(self, mounted: Set[str], unmanaged: list):
+        counts = {"all": 0, "nfs": 0, "smb": 0, "sshfs": 0}
+        active = 0
         for m in self.cfg.mounts:
             counts["all"] += 1
             counts[m.mount_type] = counts.get(m.mount_type, 0) + 1
-            if self.ops.is_mounted(m):
-                mounted += 1
+            active += self.ops.is_mounted(m, mounted)
         for lm in unmanaged:
             counts["all"] += 1
             counts[lm.mount_type] = counts.get(lm.mount_type, 0) + 1
-            mounted += 1
+            active += 1
         for row in self._nav_rows:
             row._count.set_text(str(counts.get(row._key, 0)))
         total = counts["all"]
         self.status_lbl.set_text(
-            f"  {mounted} of {total} mount{'s' if total != 1 else ''} active"
+            f"  {active} of {total} mount{'s' if total != 1 else ''} active"
             + (f"  •  {len(unmanaged)} unmanaged" if unmanaged else "")
         )
 
-    # ── CRUD ──────────────────────────────────────────────────────────────────
+    # ── Mount operations (all run off the main thread) ───────────────────────
+
+    def _run_op(self, m: MountConfig, action: str, lazy: bool = False,
+                then: Optional[Callable[[bool], None]] = None, notify_ok: bool = True):
+        if m.id in self._busy:
+            return
+        self._busy.add(m.id)
+        card = self._cards.get(m.id)
+        if card:
+            card.update(self.ops.is_mounted(m), busy=True)
+
+        def work():
+            if action == "mount":
+                ok, msg = self.ops.mount(m)
+            else:
+                ok, msg = self.ops.unmount(m, lazy=lazy)
+            GLib.idle_add(self._op_done, m, action, lazy, ok, msg, then, notify_ok)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _op_done(self, m, action, lazy, ok, msg, then, notify_ok):
+        self._busy.discard(m.id)
+        self._queue_refresh()
+        if not ok and action == "unmount" and not lazy and "busy" in msg.lower():
+            if self._confirm(f'"{m.name}" is busy',
+                             "Files on it are still open. Detach it now anyway (lazy unmount)? "
+                             "It will finish unmounting once the files are closed."):
+                self._run_op(m, "unmount", lazy=True, then=then, notify_ok=notify_ok)
+                return False
+        if not ok or notify_ok:
+            verb = "Mounted" if action == "mount" else "Unmounted"
+            notify(m.name, verb if ok and msg == "OK" else msg, ok)
+        if not ok:
+            self.status_lbl.set_text(f"  {m.name}: {msg.splitlines()[0] if msg else 'failed'}")
+        if then:
+            then(ok)
+        return False
+
+    def _toggle(self, m: MountConfig):
+        self._run_op(m, "unmount" if self.ops.is_mounted(m) else "mount")
+
+    def _open(self, m: MountConfig):
+        link, real = os.path.expanduser(m.local_path), self.ops.mountpoint(m)
+        self._open_path(link if os.path.realpath(link) == real else real)
+
+    def _open_path(self, path: str):
+        subprocess.Popen(["xdg-open", path], stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def _unmount_live(self, card: UnmanagedMountCard):
+        card.set_busy(True)
+
+        def work():
+            ok, msg = self.ops.unmount_live(card.lm)
+            GLib.idle_add(done, ok, msg)
+
+        def done(ok, msg):
+            notify(card.lm.host, "Unmounted" if ok else msg, ok)
+            if not ok:
+                self._error_dialog("Unmount failed", msg)
+            self._populate()
+            return False
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _auto_mount(self):
+        pending = [m for m in self.cfg.mounts if m.auto_mount and not self.ops.is_mounted(m)]
+        if not pending:
+            return
+        net = Gio.NetworkMonitor.get_default()
+
+        def go():
+            for m in pending:
+                self._run_op(m, "mount", notify_ok=False)
+
+        if net.get_network_available():
+            go()
+            return
+
+        def changed(mon, available):
+            if available:
+                mon.disconnect(handler)
+                go()
+
+        handler = net.connect("network-changed", changed)
+
+    # ── Dialog helpers ───────────────────────────────────────────────────────
+
+    def _run_dialog(self, d: MountDialog) -> Optional[dict]:
+        """Keep the dialog open until the input validates or the user cancels."""
+        try:
+            while d.run() == Gtk.ResponseType.OK:
+                err = d.validate()
+                if not err:
+                    return d.values()
+                d.show_error(err)
+            return None
+        finally:
+            d.destroy()
+
+    def _confirm(self, title: str, body: str) -> bool:
+        dlg = Gtk.MessageDialog(transient_for=self, modal=True,
+                                message_type=Gtk.MessageType.QUESTION,
+                                buttons=Gtk.ButtonsType.YES_NO, text=title)
+        dlg.format_secondary_text(body)
+        try:
+            return dlg.run() == Gtk.ResponseType.YES
+        finally:
+            dlg.destroy()
+
+    def _error_dialog(self, title: str, body: str):
+        dlg = Gtk.MessageDialog(transient_for=self, modal=True,
+                                message_type=Gtk.MessageType.ERROR,
+                                buttons=Gtk.ButtonsType.CLOSE, text=title)
+        dlg.format_secondary_text(body)
+        dlg.run()
+        dlg.destroy()
+        return False
+
+    # ── CRUD ─────────────────────────────────────────────────────────────────
 
     def _make_config(self, v: dict, fallback_path: str = "") -> MountConfig:
-        slug = v["name"].lower().replace(" ", "_").replace("—", "").strip("_")
+        taken = {os.path.expanduser(m.local_path) for m in self.cfg.mounts}
         return MountConfig(
-            id          = str(uuid.uuid4())[:8],
-            name        = v["name"],
-            mount_type  = v["mount_type"],
-            host        = v["host"],
-            remote_path = v["remote_path"],
-            local_path  = v["local_path"] or fallback_path or str(MOUNTS_DIR / slug),
-            username    = v["username"],
-            domain      = v["domain"],
-            port        = v["port"],
-            ssh_key     = v["ssh_key"],
-            options     = v["options"],
-            auto_mount  = v["auto_mount"],
-            created_at  = datetime.now().isoformat(),
+            id=uuid.uuid4().hex[:8],
+            name=v["name"],
+            mount_type=v["mount_type"],
+            host=v["host"],
+            remote_path=v["remote_path"],
+            local_path=v["local_path"] or fallback_path or default_local_path(v["name"], taken),
+            username=v["username"],
+            domain=v["domain"],
+            port=v["port"],
+            ssh_key=v["ssh_key"],
+            options=v["options"],
+            auto_mount=v["auto_mount"],
+            created_at=datetime.now().isoformat(timespec="seconds"),
         )
 
-    def _do_add(self, *_):
-        d = MountDialog(self)
-        if d.run() == Gtk.ResponseType.OK:
-            v = d.values()
-            if v["name"] and v["host"]:
-                m = self._make_config(v)
-                self.cfg.add(m)
-                if v["password"]:
-                    self.creds.store(m.id, v["password"])
-                self._populate()
-        d.destroy()
+    def _save_new(self, v: dict, fallback_path: str = ""):
+        m = self._make_config(v, fallback_path)
+        self.cfg.add(m)
+        if v["password"]:
+            self.creds.store(m.id, v["password"])
+        self._populate()
+
+    def _do_add(self):
+        v = self._run_dialog(MountDialog(self))
+        if v:
+            self._save_new(v)
 
     def _add_discovered(self, host, path, mtype):
-        prefill = type("P", (), {
-            "mount_type": mtype, "name": f"{host} — {path or mtype}",
-            "host": host, "remote_path": path or "",
-            "local_path": "", "username": None, "domain": None,
-            "port": None, "ssh_key": None, "options": "", "auto_mount": False,
-        })()
-        d = MountDialog(self, prefill=prefill)
-        if d.run() == Gtk.ResponseType.OK:
-            v = d.values()
-            m = self._make_config(v)
-            self.cfg.add(m)
-            if v["password"]:
-                self.creds.store(m.id, v["password"])
-            self._populate()
-            self.stack.set_visible_child_name("mounts")
-            self.nav_lb.select_row(self._nav_rows[0])
-        d.destroy()
+        if not valid_host(host):
+            self._error_dialog("Invalid host", f"Discovery returned an invalid hostname: {host!r}")
+            return
+        prefill = MountConfig(id="", name=f"{host} {path or ''}".strip(), mount_type=mtype,
+                              host=host, remote_path=path or "", local_path="")
+        v = self._run_dialog(MountDialog(self, prefill=prefill))
+        if v:
+            self._save_new(v)
+            self._show_mounts()
 
     def _import_live(self, lm: LiveMount):
         """Open the add dialog pre-filled from a live unmanaged mount."""
-        prefill = type("P", (), {
-            "mount_type":  lm.mount_type,
-            "name":        f"{lm.host} — {lm.remote_path}",
-            "host":        lm.host,
-            "remote_path": lm.remote_path,
-            "local_path":  lm.local_path,
-            "username":    lm.username,
-            "domain":      None,
-            "port":        lm.port,
-            "ssh_key":     None,
-            "options":     lm.options,
-            "auto_mount":  False,
-        })()
-        d = MountDialog(self, prefill=prefill)
-        if d.run() == Gtk.ResponseType.OK:
-            v = d.values()
-            if v["name"] and v["host"]:
-                m = self._make_config(v, fallback_path=lm.local_path)
-                self.cfg.add(m)
-                if v["password"]:
-                    self.creds.store(m.id, v["password"])
-                self._populate()
-        d.destroy()
+        prefill = MountConfig(id="", name=f"{lm.host} {lm.remote_path}", mount_type=lm.mount_type,
+                              host=lm.host, remote_path=lm.remote_path, local_path=lm.local_path,
+                              username=lm.username, port=lm.port)
+        v = self._run_dialog(MountDialog(self, prefill=prefill))
+        if v:
+            self._save_new(v, fallback_path=lm.local_path)
 
     def _do_edit(self, mount: MountConfig):
-        d = MountDialog(self, mount=mount)
-        if d.run() == Gtk.ResponseType.OK:
-            v = d.values()
-            mount.name        = v["name"]
-            mount.mount_type  = v["mount_type"]
-            mount.host        = v["host"]
-            mount.remote_path = v["remote_path"]
-            mount.local_path  = v["local_path"]
-            mount.username    = v["username"]
-            mount.domain      = v["domain"]
-            mount.port        = v["port"]
-            mount.ssh_key     = v["ssh_key"]
-            mount.options     = v["options"]
-            mount.auto_mount  = v["auto_mount"]
-            self.cfg.update(mount)
-            if v["password"]:
-                self.creds.store(mount.id, v["password"])
-            self._populate()
-        d.destroy()
+        if mount.id in self._busy or self.ops.is_mounted(mount):
+            self._error_dialog("Unmount first",
+                               f'Unmount "{mount.name}" before editing its settings.')
+            return
+        v = self._run_dialog(MountDialog(self, mount=mount))
+        if not v:
+            return
+        for k in ("name", "mount_type", "host", "remote_path", "username", "domain",
+                  "port", "ssh_key", "options", "auto_mount"):
+            setattr(mount, k, v[k])
+        mount.local_path = v["local_path"] or mount.local_path
+        self.cfg.update(mount)
+        if v["clear_password"]:
+            self.creds.delete(mount.id)
+        elif v["password"]:
+            self.creds.store(mount.id, v["password"])
+        self._populate()
 
     def _do_delete(self, mount: MountConfig):
-        dlg = Gtk.MessageDialog(
-            transient_for=self, modal=True,
-            message_type=Gtk.MessageType.QUESTION,
-            buttons=Gtk.ButtonsType.YES_NO,
-            text=f'Remove "{mount.name}"?',
-        )
-        dlg.format_secondary_text(
-            "The mount configuration and stored credentials will be deleted. "
-            "The mounted filesystem and its data are not affected."
-        )
-        if dlg.run() == Gtk.ResponseType.YES:
-            if self.ops.is_mounted(mount):
-                self.ops.unmount(mount)
+        if mount.id in self._busy:
+            return
+        if not self._confirm(f'Remove "{mount.name}"?',
+                             "It will be unmounted, and its configuration and stored "
+                             "password deleted. Data on the server is not affected."):
+            return
+
+        def finish(ok: bool):
+            if not ok:
+                self._error_dialog("Not removed",
+                                   f'"{mount.name}" could not be unmounted, so it was kept.')
+                return
             self.creds.delete(mount.id)
             self.cfg.delete(mount.id)
             self._populate()
-        dlg.destroy()
 
-    # ── Helpers ───────────────────────────────────────────────────────────────
-
-    def _refresh_all(self, *_):
-        for r in self.lb.get_children():
-            if isinstance(r, MountCard):
-                threading.Thread(target=r.refresh, daemon=True).start()
-        GLib.timeout_add(600, self._rescan_unmanaged)
-
-    def _rescan_unmanaged(self):
-        GLib.idle_add(self._populate)
-        return False
-
-    def _tick(self):
-        self._refresh_all()
-        return True
-
-    def _auto_mount(self):
-        for m in self.cfg.mounts:
-            if m.auto_mount and not self.ops.is_mounted(m):
-                threading.Thread(target=self.ops.mount, args=(m,), daemon=True).start()
-
-    def _key_press(self, _, ev):
-        if ev.state & Gdk.ModifierType.CONTROL_MASK and ev.keyval == ord("n"):
-            self._do_add()
+        if self.ops.is_mounted(mount):
+            self._run_op(mount, "unmount", then=finish, notify_ok=False)
+        else:
+            finish(True)
 
 
-# ── Application ───────────────────────────────────────────────────────────────
+# ── Application ──────────────────────────────────────────────────────────────
 
 class MountBridgeApp(Gtk.Application):
-    def __init__(self):
+    def __init__(self, start_hidden: bool = False):
         super().__init__(application_id=APP_ID)
-        self.cfg   = ConfigStore()
+        self.start_hidden = start_hidden
+        self.cfg: Optional[ConfigStore] = None
+        self.win: Optional[MainWindow] = None
+        self._tray_ref = None
+        self._tray_menu = None
+
+    def do_startup(self):
+        Gtk.Application.do_startup(self)
+        Notify.init(APP_NAME)
+        self.cfg = ConfigStore()
         self.creds = CredentialStore()
-        self.ops   = MountOps(self.creds)
-        self.win   = None
+        self.ops = MountOps(self.creds)
+        for name, accel, cb in (("add-mount", "<Primary>n", lambda *_: self._add_mount()),
+                                ("quit", "<Primary>q", lambda *_: self.quit())):
+            act = Gio.SimpleAction.new(name, None)
+            act.connect("activate", cb)
+            self.add_action(act)
+            self.set_accels_for_action(f"app.{name}", [accel])
+
+    def _add_mount(self):
+        self.win.present()
+        self.win._do_add()
 
     def do_activate(self):
-        if not self.win:
+        first = self.win is None
+        if first:
             self.win = MainWindow(self, self.cfg, self.creds, self.ops)
-            self._tray()
-        self.win.present()
+            if self._tray():
+                self.hold()  # keep running in the tray when the window is closed
+                self.win.connect("delete-event", lambda w, _e: w.hide_on_delete())
+        if not (first and self.start_hidden and self._tray_ref):
+            self.win.present()
 
-    def _tray(self):
-        if HAS_INDICATOR:
+    def _menu(self) -> Gtk.Menu:
+        menu = Gtk.Menu()
+        for label, cb in ((f"Open {APP_NAME}", lambda _: self.win.present()),
+                          (None, None), ("Quit", lambda _: self.quit())):
+            item = Gtk.SeparatorMenuItem() if label is None else Gtk.MenuItem(label=label)
+            if cb:
+                item.connect("activate", cb)
+            menu.append(item)
+        menu.show_all()
+        self._tray_menu = menu  # keep a Python reference alive
+        return menu
+
+    def _tray(self) -> bool:
+        """Create a tray icon. References are kept on self so they aren't garbage-collected."""
+        if AppIndicator3 is not None:
             try:
                 ind = AppIndicator3.Indicator.new(
                     APP_ID, "drive-harddisk-symbolic",
-                    AppIndicator3.IndicatorCategory.APPLICATION_STATUS,
-                )
+                    AppIndicator3.IndicatorCategory.APPLICATION_STATUS)
                 ind.set_status(AppIndicator3.IndicatorStatus.ACTIVE)
-                menu  = Gtk.Menu()
-                show  = Gtk.MenuItem(label=f"Open {APP_NAME}")
-                show.connect("activate", lambda _: self.win.present())
-                menu.append(show)
-                menu.append(Gtk.SeparatorMenuItem())
-                quit_ = Gtk.MenuItem(label="Quit")
-                quit_.connect("activate", lambda _: self.quit())
-                menu.append(quit_)
-                menu.show_all()
-                ind.set_menu(menu)
-                return
-            except Exception:
-                pass
+                ind.set_menu(self._menu())
+                self._tray_ref = ind
+                return True
+            except Exception as e:
+                print(f"[tray] AppIndicator failed: {e}", file=sys.stderr)
         try:
             si = Gtk.StatusIcon.new_from_icon_name("drive-harddisk-symbolic")
             si.set_tooltip_text(APP_NAME)
             si.connect("activate", lambda _: self.win.present())
-        except Exception:
-            pass
+            menu = self._menu()
+            si.connect("popup-menu", lambda _i, btn, t: menu.popup(None, None, None, None, btn, t))
+            self._tray_ref = si
+            return True
+        except Exception as e:
+            print(f"[tray] StatusIcon failed: {e}", file=sys.stderr)
+            return False
 
 
 def main():
-    app = MountBridgeApp()
-    sys.exit(app.run(sys.argv))
+    argv = [a for a in sys.argv if a != "--hidden"]
+    app = MountBridgeApp(start_hidden=len(argv) != len(sys.argv))
+    sys.exit(app.run(argv))

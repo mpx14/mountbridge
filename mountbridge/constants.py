@@ -1,14 +1,21 @@
 """Application-wide constants, paths and stylesheet."""
+import os
+import pwd
 from pathlib import Path
 
 APP_ID      = "net.mutefx.mountbridge"
 APP_NAME    = "MountBridge"
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.2.0"
 
 CONFIG_DIR  = Path.home() / ".config" / "mountbridge"
 MOUNTS_DIR  = Path.home() / ".mounts"
 CONFIG_FILE = CONFIG_DIR / "mounts.json"
 KEYRING_SVC = "mountbridge"
+
+# Root helper for NFS/SMB (see data/mountbridge-helper). NFS/SMB mounts live in a
+# root-owned tree; ~/.mounts/<name> is a convenience symlink into it.
+HELPER          = "/usr/local/libexec/mountbridge-helper"
+SYS_MOUNT_BASE  = Path("/mnt/mountbridge") / pwd.getpwuid(os.getuid()).pw_name
 
 CSS = """
 /* -- Base ------------------------------------------------- */

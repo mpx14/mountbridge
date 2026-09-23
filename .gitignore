@@ -20,6 +20,7 @@ env/
 # Type checking / linting
 .mypy_cache/
 .ruff_cache/
+.pytest_cache/
 .dmypy.json
 
 # IDE
