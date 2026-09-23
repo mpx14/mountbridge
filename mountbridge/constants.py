@@ -1,11 +1,15 @@
 """Application-wide constants, paths and stylesheet."""
 import os
 import pwd
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 APP_ID      = "net.mutefx.mountbridge"
 APP_NAME    = "MountBridge"
-APP_VERSION = "1.2.0"
+try:
+    APP_VERSION = version("mountbridge")   # single source of truth: pyproject.toml
+except PackageNotFoundError:               # running from a source tree without installing
+    APP_VERSION = "unknown"
 
 CONFIG_DIR  = Path.home() / ".config" / "mountbridge"
 MOUNTS_DIR  = Path.home() / ".mounts"

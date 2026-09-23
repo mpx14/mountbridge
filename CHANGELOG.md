@@ -48,6 +48,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - A locked keyring silently mounted SMB as guest; it now reports the error.
 - Add/Edit dialog discarded invalid input on Save; it now validates in place.
 - Removing a mounted entry deleted it even if unmount failed.
+- "Open Folder" on an unreachable mount failed silently (the file manager's
+  error was discarded); it now reports e.g. "Connection refused".
+- A failure to save a password to the keyring was only printed to stderr; it
+  is now shown in a dialog.
+- `mountbridge --version`, referenced by the bug report template, didn't exist.
 - CI failed on its own lint config; `py.typed` was missing; `.[dev]` extra was
   undefined; sidebar layout gap; `Gdk` imported without a version.
 
@@ -63,10 +68,12 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Added a pytest suite (parsers, ops, store, root helper) and CI runs it on
   Python 3.11–3.14 along with shellcheck and a package build.
 - Removed redundant `bin/mountbridge`.
+- The version is defined once, in `pyproject.toml`; the app reads it from the
+  installed package metadata and shows it in the window.
 
 ---
 
-## [1.1.0] — 2024-11-xx
+## [1.1.0] — 2026-03-16
 
 ### Added
 - **Live mount detection** — scans `/proc/mounts` on startup and every 12 s;
@@ -112,3 +119,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Search bar
 - Ctrl+N keyboard shortcut to add a mount
 - `install.sh` with interactive sudoers and FUSE configuration
+
+[1.2.0]: https://github.com/mpx14/mountbridge/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/mpx14/mountbridge/releases/tag/v1.1.0

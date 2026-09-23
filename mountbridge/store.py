@@ -21,13 +21,12 @@ class CredentialStore:
         import keyring
         return keyring
 
-    def store(self, mount_id: str, password: str) -> bool:
+    def store(self, mount_id: str, password: str):
+        """Save a password. Raises CredentialError if the keyring can't store it."""
         try:
             self._kr().set_password(KEYRING_SVC, mount_id, password)
-            return True
         except Exception as e:
-            print(f"[creds] store error: {e}", file=sys.stderr)
-            return False
+            raise CredentialError(f"Keyring unavailable or locked: {e}") from e
 
     def get(self, mount_id: str) -> Optional[str]:
         """Return the stored password, or None if there is none.

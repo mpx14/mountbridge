@@ -31,3 +31,15 @@ def test_corrupt_config_is_preserved_not_overwritten(monkeypatch, tmp_path):
     assert len(backups) == 1 and "truncated" in backups[0].read_text()
     s.add(m("new"))
     assert json.loads((tmp_path / "mounts.json").read_text())["mounts"][0]["id"] == "new"
+
+
+def test_keyring_store_failure_raises(monkeypatch):
+    class Broken:
+        def set_password(self, *a):
+            raise RuntimeError("No recommended backend was available")
+
+    cs = store.CredentialStore()
+    monkeypatch.setattr(cs, "_kr", lambda: Broken())
+    import pytest
+    with pytest.raises(store.CredentialError, match="No recommended backend"):
+        cs.store("id", "pw")

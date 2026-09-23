@@ -24,12 +24,12 @@ for _ns in ("AyatanaAppIndicator3", "AppIndicator3"):
     except (ValueError, ImportError):
         continue
 
-from .constants import APP_ID, APP_NAME, CSS
+from .constants import APP_ID, APP_NAME, APP_VERSION, CSS
 from .discovery import Discovery
 from .models import LiveMount, MountConfig
 from .ops import LiveMountScanner, MountOps, mounted_paths
 from .parsing import read_mounts, valid_host
-from .store import ConfigStore, CredentialStore
+from .store import ConfigStore, CredentialError, CredentialStore
 from .widgets import (
     DiscoveryPanel,
     MountCard,
@@ -125,7 +125,8 @@ class MainWindow(Gtk.ApplicationWindow):
         tl = Gtk.Label(label=APP_NAME)
         tl.get_style_context().add_class("mb-toolbar-title")
         title_box.pack_start(tl, False, False, 0)
-        sl = Gtk.Label(label="Network Mount Manager")
+        sub = "Network Mount Manager"
+        sl = Gtk.Label(label=f"{sub} · v{APP_VERSION}" if APP_VERSION != "unknown" else sub)
         sl.get_style_context().add_class("mb-toolbar-sub")
         title_box.pack_start(sl, False, False, 0)
         tb.pack_start(title_box, True, True, 0)
@@ -415,8 +416,37 @@ class MainWindow(Gtk.ApplicationWindow):
         self._open_path(link if os.path.realpath(link) == real else real)
 
     def _open_path(self, path: str):
-        subprocess.Popen(["xdg-open", path], stdin=subprocess.DEVNULL,
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        """Open a folder in the file manager, reporting unreachable mounts instead of
+        failing silently. The accessibility check runs off the main thread because
+        stat() on a dead network mount can block."""
+        state = {"done": False}
+
+        def check():
+            try:
+                os.listdir(path)
+                err = None
+            except OSError as e:
+                err = e.strerror or str(e)
+            GLib.idle_add(finish, err)
+
+        def finish(err):
+            if state["done"]:
+                return False
+            state["done"] = True
+            if err:
+                self._error_dialog(f"Can't open {path}",
+                                   f"{err}.\n\nThe server may be offline or unreachable. "
+                                   "Unmount it and mount again once the server is back.")
+                return False
+            try:
+                subprocess.Popen(["xdg-open", path], stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except OSError as e:
+                self._error_dialog("Can't open folder", f"xdg-open failed: {e}")
+            return False
+
+        threading.Thread(target=check, daemon=True).start()
+        GLib.timeout_add_seconds(5, lambda: finish("Not responding after 5 seconds"))
 
     def _unmount_live(self, card: UnmanagedMountCard):
         card.set_busy(True)
@@ -508,12 +538,21 @@ class MainWindow(Gtk.ApplicationWindow):
             created_at=datetime.now().isoformat(timespec="seconds"),
         )
 
+    def _store_password(self, m: MountConfig, password: str):
+        try:
+            self.creds.store(m.id, password)
+        except CredentialError as e:
+            self._error_dialog("Password not saved",
+                               f"{e}\n\n\"{m.name}\" was saved without its password, so mounting it "
+                               "will fail until a keyring (e.g. gnome-keyring) is running. "
+                               "Then edit the mount and enter the password again.")
+
     def _save_new(self, v: dict, fallback_path: str = ""):
         m = self._make_config(v, fallback_path)
         self.cfg.add(m)
-        if v["password"]:
-            self.creds.store(m.id, v["password"])
         self._populate()
+        if v["password"]:
+            self._store_password(m, v["password"])
 
     def _do_add(self):
         v = self._run_dialog(MountDialog(self))
@@ -553,11 +592,11 @@ class MainWindow(Gtk.ApplicationWindow):
             setattr(mount, k, v[k])
         mount.local_path = v["local_path"] or mount.local_path
         self.cfg.update(mount)
+        self._populate()
         if v["clear_password"]:
             self.creds.delete(mount.id)
         elif v["password"]:
-            self.creds.store(mount.id, v["password"])
-        self._populate()
+            self._store_password(mount, v["password"])
 
     def _do_delete(self, mount: MountConfig):
         if mount.id in self._busy:
@@ -659,6 +698,9 @@ class MountBridgeApp(Gtk.Application):
 
 
 def main():
+    if "--version" in sys.argv[1:]:
+        print(f"{APP_NAME} {APP_VERSION}")
+        return
     argv = [a for a in sys.argv if a != "--hidden"]
     app = MountBridgeApp(start_hidden=len(argv) != len(sys.argv))
     sys.exit(app.run(argv))
