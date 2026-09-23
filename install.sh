@@ -44,7 +44,13 @@ if python3 -m pip show --quiet mountbridge 2>/dev/null; then
     info "Removing previous pip --user install"
     python3 -m pip uninstall -y --break-system-packages mountbridge || true
 fi
-pipx install --force --system-site-packages "${REPO_DIR}"
+# Uninstall first rather than `pipx install --force`: with a uv backend (Debian's
+# pipx when uv is on PATH), --force fails because the venv already exists.
+if pipx list --short 2>/dev/null | grep -q '^mountbridge '; then
+    info "Removing previous pipx install"
+    pipx uninstall mountbridge >/dev/null
+fi
+pipx install --system-site-packages "${REPO_DIR}"
 pipx ensurepath >/dev/null 2>&1 || true
 export PATH="$HOME/.local/bin:$PATH"
 ok "MountBridge installed ($(command -v mountbridge))"

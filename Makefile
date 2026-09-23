@@ -27,7 +27,8 @@ help:
 	@echo ""
 
 install:
-	pipx install --force --system-site-packages .
+	-pipx uninstall $(PKG) 2>/dev/null
+	pipx install --system-site-packages .
 
 install-dev:
 	$(PYTHON) -m venv --system-site-packages $(VENV)

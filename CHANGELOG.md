@@ -53,6 +53,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - A failure to save a password to the keyring was only printed to stderr; it
   is now shown in a dialog.
 - `mountbridge --version`, referenced by the bug report template, didn't exist.
+- Re-running `install.sh` failed with pipx's uv backend (`--force` can't
+  replace an existing venv); it now uninstalls the old copy first.
 - CI failed on its own lint config; `py.typed` was missing; `.[dev]` extra was
   undefined; sidebar layout gap; `Gdk` imported without a version.
 
