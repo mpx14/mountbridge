@@ -2,6 +2,10 @@
 
 PYTHON  ?= python3
 VENV    ?= .venv
+# Use the dev venv's tools when it exists, so `make check` works without activating it.
+PY      := $(if $(wildcard $(VENV)/bin/python3),$(VENV)/bin/python3,$(PYTHON))
+RUFF    := $(if $(wildcard $(VENV)/bin/ruff),$(VENV)/bin/ruff,ruff)
+MYPY    := $(if $(wildcard $(VENV)/bin/mypy),$(VENV)/bin/mypy,mypy)
 PKG     := mountbridge
 LINT    := $(PKG)/ tests/ data/mountbridge-helper
 VERSION := $(shell grep '^version' pyproject.toml | head -1 | cut -d'"' -f2)
@@ -30,17 +34,17 @@ install-dev:
 	$(VENV)/bin/pip install -e ".[dev]"
 
 lint:
-	ruff check $(LINT)
+	$(RUFF) check $(LINT)
 
 fmt:
-	ruff check --fix $(LINT)
-	ruff format $(LINT)
+	$(RUFF) check --fix $(LINT)
+	$(RUFF) format $(LINT)
 
 typecheck:
-	mypy $(PKG)/ --ignore-missing-imports
+	$(MYPY) $(PKG)/ --ignore-missing-imports
 
 test:
-	$(PYTHON) -m pytest -q
+	$(PY) -m pytest -q
 
 check: lint test
 
@@ -49,7 +53,7 @@ clean:
 	find . -name __pycache__ -type d -prune -exec rm -rf {} +
 
 dist: clean
-	$(PYTHON) -m build
+	$(PY) -m build
 
 uninstall:
 	pipx uninstall $(PKG)

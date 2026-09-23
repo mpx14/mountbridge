@@ -61,7 +61,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Installed with `pipx --system-site-packages` instead of
   `pip --break-system-packages`.
 - Added a pytest suite (parsers, ops, store, root helper) and CI runs it on
-  Python 3.11–3.13 along with shellcheck and a package build.
+  Python 3.11–3.14 along with shellcheck and a package build.
 - Removed redundant `bin/mountbridge`.
 
 ---
