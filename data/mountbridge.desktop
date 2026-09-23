@@ -10,4 +10,3 @@ Terminal=false
 StartupNotify=true
 Categories=System;Network;FileManager;
 Keywords=mount;nfs;smb;cifs;sshfs;samba;network;share;filesystem;
-MimeType=

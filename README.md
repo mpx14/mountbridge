@@ -53,7 +53,43 @@ sudo apt install gir1.2-appindicator3-0.1
 
 ## Installation
 
-### Quick install (recommended)
+### Debian package (recommended)
+
+One `.deb` works on **Debian 12, 13 and testing**, **Ubuntu 22.04 and 24.04**,
+and distributions based on them (Linux Mint, Pop!_OS, …). Download
+`mountbridge_<version>_all.deb` from the
+[Releases](https://github.com/mpx14/mountbridge/releases) page, then:
+
+```bash
+sudo apt install ./mountbridge_1.2.0_all.deb
+sudo adduser $USER mountbridge      # NFS/SMB access; log out and back in afterwards
+```
+
+`apt` pulls in all dependencies. The package installs the app, the NFS/SMB root
+helper and a sudoers rule for the `mountbridge` group. On a shared machine, give
+each user who should mount NFS/SMB access with `sudo adduser <user> mountbridge`;
+SSHFS works for everyone without it.
+
+**Switching from `install.sh` to the package:** first run `pipx uninstall mountbridge`
+(otherwise `~/.local/bin/mountbridge` shadows the packaged `/usr/bin/mountbridge`).
+The package replaces the sudoers rule written by `install.sh` automatically;
+`/usr/local/libexec/mountbridge-helper` can be deleted afterwards.
+
+### Build the package yourself
+
+```bash
+git clone https://github.com/mpx14/mountbridge.git
+cd mountbridge
+sudo apt-get build-dep ./      # debhelper, dh-python, pybuild-plugin-pyproject, …
+make deb                       # → dist/mountbridge_<version>_all.deb
+```
+
+Build on the **oldest** release you want to support (the CI builds on Debian 12);
+the result installs on newer ones.
+
+### From source (`install.sh`)
+
+For distributions without a package, or to run the latest `main`:
 
 ```bash
 git clone https://github.com/mpx14/mountbridge.git
@@ -64,33 +100,29 @@ bash install.sh
 The installer will:
 
 1. Install the `apt` dependencies
-2. Install the `mountbridge` package with `pipx` (its venv can see apt's `python3-gi`)
+2. Install the `mountbridge` Python package with `pipx` (its venv can see apt's `python3-gi`)
 3. Create `~/.mounts/` and `~/.config/mountbridge/`
 4. Install the `.desktop` entry and SVG icon
-5. Optionally create an XFCE autostart entry (starts minimised to the tray)
-6. Optionally install the NFS/SMB root helper and its sudoers rule (and replace the unsafe rule from v1.1 if present)
-
-### Manual install
-
-```bash
-pipx install --system-site-packages .
-mountbridge
-```
-
-NFS/SMB additionally need the helper and sudoers rule — see below.
+5. Optionally create an autostart entry (starts minimised to the tray)
+6. Optionally install the NFS/SMB root helper and sudoers rule, create the
+   `mountbridge` group and add you to it (and replace the unsafe rule from 1.1)
 
 ---
 
 ## NFS / SMB and root
 
 SSHFS is fully userspace — no root is ever involved. Mounting NFS and SMB/CIFS
-requires root, so MountBridge uses a small root helper,
-`/usr/local/libexec/mountbridge-helper`, and a sudoers rule that allows **only
-that helper**:
+requires root, so MountBridge uses a small root helper and a sudoers rule that
+lets members of the `mountbridge` group run **only that helper**:
 
 ```
-ben ALL=(root) NOPASSWD: /usr/local/libexec/mountbridge-helper
+%mountbridge ALL=(root) NOPASSWD: /usr/libexec/mountbridge/mountbridge-helper
 ```
+
+(With `install.sh` the helper lives at `/usr/local/libexec/mountbridge-helper`
+instead.) Grant a user access with `sudo adduser <user> mountbridge`; it takes
+effect at their next login. MountBridge tells users who aren't in the group yet
+exactly what to ask their administrator.
 
 The helper is the security boundary. It:
 
@@ -105,16 +137,8 @@ The helper is the security boundary. It:
 
 > **Upgrading from 1.1:** the old rule granted `mount`/`umount` with wildcard
 > arguments, which is equivalent to full root (for example `mount --bind` over
-> `/etc`). `install.sh` detects and replaces it. If you're not re-running the
-> installer, remove it now: `sudo rm /etc/sudoers.d/mountbridge`.
-
-Manual install:
-
-```bash
-sudo install -D -o root -g root -m 755 data/mountbridge-helper /usr/local/libexec/mountbridge-helper
-sed "s/%USER%/$USER/g" data/mountbridge.sudoers > /tmp/mb.sudoers
-sudo visudo -cf /tmp/mb.sudoers && sudo install -o root -g root -m 440 /tmp/mb.sudoers /etc/sudoers.d/mountbridge
-```
+> `/etc`). Both the package and `install.sh` detect and replace it. If you're
+> not upgrading right away, remove it now: `sudo rm /etc/sudoers.d/mountbridge`.
 
 ---
 
@@ -157,6 +181,7 @@ Config lives in `~/.config/mountbridge/mounts.json`. Passwords are **not** store
 mountbridge/
 ├── mountbridge/           # Python package
 │   ├── __init__.py
+│   ├── cli.py             # Entry point: --version/--help without GTK
 │   ├── constants.py       # APP_ID, paths, GTK CSS
 │   ├── models.py          # MountConfig, LiveMount, enums
 │   ├── store.py           # ConfigStore (JSON) + CredentialStore (keyring)
@@ -165,8 +190,9 @@ mountbridge/
 │   ├── discovery.py       # Avahi/smbclient/showmount discovery
 │   ├── widgets.py         # GTK widget classes
 │   └── window.py          # MainWindow + MountBridgeApp
+├── debian/                # Debian packaging (make deb)
 ├── data/
-│   ├── mountbridge-helper # Root helper for NFS/SMB (installed to /usr/local/libexec)
+│   ├── mountbridge-helper # Root helper for NFS/SMB
 │   ├── mountbridge.desktop
 │   ├── mountbridge.sudoers
 │   └── icons/mountbridge.svg
@@ -181,16 +207,25 @@ mountbridge/
 
 ## Uninstalling
 
+Debian package:
+
+```bash
+sudo apt remove mountbridge     # keeps /etc/sudoers.d/mountbridge (a config file)
+sudo apt purge mountbridge      # removes it too; the mountbridge group is kept
+```
+
+`install.sh` install:
+
 ```bash
 pipx uninstall mountbridge
 rm -f ~/.local/share/applications/mountbridge.desktop
 rm -f ~/.local/share/icons/hicolor/scalable/apps/mountbridge.svg
 rm -f ~/.config/autostart/mountbridge.desktop
 sudo rm -f /etc/sudoers.d/mountbridge /usr/local/libexec/mountbridge-helper
-# Optionally remove config:
-rm -rf ~/.config/mountbridge
-rmdir --ignore-fail-on-non-empty ~/.mounts
 ```
+
+Your mount definitions stay in `~/.config/mountbridge/` either way; delete that
+directory to remove them.
 
 ---
 

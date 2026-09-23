@@ -1,0 +1,13 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = configure ]; then
+    # Members of this group may run the NFS/SMB helper (see /etc/sudoers.d/mountbridge).
+    if ! getent group mountbridge >/dev/null; then
+        addgroup --system --quiet mountbridge
+    fi
+fi
+
+#DEBHELPER#
+
+exit 0

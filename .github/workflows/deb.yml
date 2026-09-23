@@ -1,0 +1,106 @@
+name: Debian package
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    name: Build .deb (Debian 12)
+    runs-on: ubuntu-latest
+    # Build on the oldest supported Debian so the result installs on newer ones too.
+    container: debian:bookworm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential devscripts equivs lintian
+          mk-build-deps --install --remove --tool 'apt-get -y --no-install-recommends' debian/control
+
+      - name: Build
+        run: dpkg-buildpackage -us -uc -b
+
+      - name: Lintian
+        run: lintian --profile debian -I --fail-on error,warning ../mountbridge_*.changes
+
+      - name: Collect
+        run: mkdir dist && cp ../mountbridge_*_all.deb dist/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb
+          path: dist/*.deb
+
+  install-test:
+    name: Install on ${{ matrix.image }}
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["debian:bookworm", "debian:trixie", "debian:testing", "ubuntu:22.04", "ubuntu:24.04"]
+    container: ${{ matrix.image }}
+    # debian:testing breaks transiently; report it without failing the run.
+    continue-on-error: ${{ matrix.image == 'debian:testing' }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: deb
+
+      - name: Install
+        run: |
+          apt-get update
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ./mountbridge_*_all.deb
+
+      - name: Check installation
+        run: |
+          set -x
+          mountbridge --version
+          mountbridge --help
+          visudo -c
+          getent group mountbridge
+          test "$(stat -c %a /etc/sudoers.d/mountbridge)" = 440
+          test -x /usr/libexec/mountbridge/mountbridge-helper
+          python3 -c "import gi; gi.require_version('Gtk', '3.0'); import mountbridge.window"
+
+      - name: Check group access and the helper boundary
+        run: |
+          set -x
+          useradd -m tester
+          sudo -l -U tester > before.txt 2>&1 || true
+          if grep -q mountbridge-helper before.txt; then echo "non-member has access"; exit 1; fi
+          adduser tester mountbridge
+          sudo -l -U tester > after.txt
+          grep -q /usr/libexec/mountbridge/mountbridge-helper after.txt
+          # A member may run the helper, but it must still refuse forbidden options.
+          if sudo -u tester sudo -n /usr/libexec/mountbridge/mountbridge-helper \
+               mount nfs 127.0.0.1:/x test suid; then
+            echo "helper accepted suid"; exit 1
+          fi
+
+      - name: Purge
+        run: |
+          apt-get purge -y mountbridge
+          test ! -e /etc/sudoers.d/mountbridge
+          test ! -e /usr/libexec/mountbridge/mountbridge-helper
+
+  release:
+    name: Attach .deb to a draft release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: install-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: deb
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          files: mountbridge_*_all.deb

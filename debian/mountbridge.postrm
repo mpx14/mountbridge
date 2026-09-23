@@ -1,0 +1,17 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = purge ]; then
+    # Remove empty mountpoint directories. Anything still mounted is left alone
+    # (rmdir fails on a mountpoint). The 'mountbridge' group is kept, as usual
+    # for system groups, so a reinstall restores access for existing members.
+    if [ -d /mnt/mountbridge ]; then
+        find /mnt/mountbridge -mindepth 1 -maxdepth 2 -type d -empty -delete 2>/dev/null || true
+        rmdir /mnt/mountbridge 2>/dev/null || true
+    fi
+    rm -rf /run/mountbridge
+fi
+
+#DEBHELPER#
+
+exit 0
