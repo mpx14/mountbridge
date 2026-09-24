@@ -58,7 +58,20 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - CI failed on its own lint config; `py.typed` was missing; `.[dev]` extra was
   undefined; sidebar layout gap; `Gdk` imported without a version.
 
+### Added
+- **Debian package** (`make deb`; built and install-tested in CI on Debian
+  12/13/testing and Ubuntu 22.04/24.04). Installs the helper to
+  `/usr/libexec/mountbridge/` and grants it to the `mountbridge` group.
+- The installing user is asked (debconf) whether to get NFS/SMB access;
+  unattended installs add nobody. `dpkg-reconfigure mountbridge` asks again.
+- In the app, an NFS/SMB mount without access offers **Grant Access…**, which
+  adds the user to the group via `pkexec` (administrator password).
+- `mountbridge --help`; `--version`/`--help` work without a display.
+
 ### Changed
+- NFS/SMB access is granted per **group** (`mountbridge`) instead of a sudoers
+  rule naming one user, for both the package and `install.sh`. Users outside
+  the group are told exactly what to ask their administrator.
 - NFS default options are now `rw,hard` (was `rw,soft,timeo=30`, which risks
   silent data loss on writes; see nfs(5)).
 - Busy unmounts offer a lazy unmount.

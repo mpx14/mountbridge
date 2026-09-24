@@ -5,12 +5,14 @@ SSHFS runs entirely as the user. Nothing here stats a mountpoint to decide
 whether it is mounted: status comes from /proc/self/mountinfo only, so a hung
 server can't block the caller.
 """
+import grp
 import os
+import pwd
 import subprocess
 from pathlib import Path
 from typing import Iterable, List, Optional, Set, Tuple
 
-from .constants import HELPER, SYS_MOUNT_BASE
+from .constants import HELPER, HELPER_GROUP, SYS_MOUNT_BASE
 from .models import LiveMount, MountConfig, MountType
 from .parsing import MountEntry, read_mounts, slugify
 from .store import CredentialError, CredentialStore
@@ -24,6 +26,72 @@ SMB_DEFAULT_OPTS = "file_mode=0644,dir_mode=0755"
 
 def _norm(path: str) -> str:
     return os.path.normpath(os.path.expanduser(path))
+
+
+ACCESS_OK, ACCESS_RELOGIN, ACCESS_NOT_MEMBER = "ok", "relogin", "not-member"
+PKEXEC = "/usr/bin/pkexec"
+ADDUSER = "/usr/sbin/adduser"
+
+
+def current_user() -> str:
+    return pwd.getpwuid(os.getuid()).pw_name
+
+
+def helper_access_state() -> str:
+    """ok / relogin (in the group database, not yet in this session) / not-member.
+
+    sudo checks the running session's groups, and a new group membership only
+    reaches a session at login — hence the separate 'relogin' state.
+    """
+    try:
+        group = grp.getgrnam(HELPER_GROUP)
+    except KeyError:
+        return ACCESS_OK  # no group: an older per-user sudoers rule may apply; let sudo decide
+    if group.gr_gid in os.getgroups() or os.getgid() == group.gr_gid:
+        return ACCESS_OK
+    if current_user() in group.gr_mem:
+        return ACCESS_RELOGIN
+    return ACCESS_NOT_MEMBER
+
+
+def manual_grant_command(user: str) -> str:
+    return f"sudo adduser {user} {HELPER_GROUP}"
+
+
+def helper_access_problem() -> Optional[str]:
+    """Explain why this user can't use the NFS/SMB helper yet, or None if they can."""
+    state = helper_access_state()
+    if state == ACCESS_RELOGIN:
+        return (f"You were added to the '{HELPER_GROUP}' group, but that only takes effect "
+                "after you log out and back in.")
+    if state == ACCESS_NOT_MEMBER:
+        return (f"Your account isn't allowed to mount NFS/SMB shares yet. An administrator "
+                f"needs to run:\n\n    {manual_grant_command(current_user())}\n\n"
+                "and then you need to log out and back in. (SSHFS mounts don't need this.)")
+    return None
+
+
+def grant_helper_access(user: str) -> Result:
+    """Add `user` to the helper group via pkexec; polkit asks for an administrator's
+    password in the desktop's usual dialog. Blocks until the dialog is answered."""
+    manual = f"\n\nAn administrator can instead run:\n\n    {manual_grant_command(user)}"
+    if not os.path.exists(PKEXEC):
+        return False, "pkexec is not installed." + manual
+    try:
+        r = subprocess.run([PKEXEC, ADDUSER, user, HELPER_GROUP], stdin=subprocess.DEVNULL,
+                           capture_output=True, text=True, timeout=600)
+    except subprocess.TimeoutExpired:
+        return False, "Timed out waiting for authentication." + manual
+    except OSError as e:
+        return False, f"Could not run pkexec: {e}" + manual
+    if r.returncode == 0:
+        return True, f"{user} can now mount NFS/SMB shares after logging out and back in."
+    if r.returncode == 126:
+        return False, "Cancelled."
+    if r.returncode == 127:
+        return False, ("Not authorised, or no authentication agent is running "
+                       "(the desktop's password dialog)." + manual)
+    return False, (r.stderr.strip() or f"adduser failed (exit {r.returncode})") + manual
 
 
 def mounted_paths(entries: Optional[Iterable[MountEntry]] = None) -> Set[str]:
@@ -163,11 +231,15 @@ class MountOps:
 
     def _helper(self, args: List[str], stdin: Optional[str] = "") -> Result:
         if not os.path.exists(HELPER):
-            return False, f"{HELPER} is not installed — re-run install.sh"
+            return False, ("The MountBridge NFS/SMB helper is not installed. Install the "
+                           "mountbridge package, or re-run install.sh.")
+        problem = helper_access_problem()
+        if problem:
+            return False, problem
         ok, msg = self._run(["sudo", "-n", HELPER] + args, 60, stdin=stdin)
-        if not ok and "sudo:" in msg and ("password" in msg or "not allowed" in msg):
-            msg = ("Not authorised to run the MountBridge helper. "
-                   "Re-run install.sh and accept the sudoers step.\n\n" + msg)
+        if not ok and "sudo" in msg and ("password" in msg or "not allowed" in msg):
+            msg = (f"Not authorised to run {HELPER}. Check that /etc/sudoers.d/mountbridge "
+                   f"exists and that you're in the '{HELPER_GROUP}' group.\n\n" + msg)
         return ok, msg
 
     def _run(self, cmd, timeout, not_found_msg=None, stdin: Optional[str] = None) -> Result:

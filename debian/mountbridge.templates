@@ -1,0 +1,15 @@
+Template: mountbridge/add-installing-user
+Type: boolean
+Default: true
+_Description: Allow ${user} to mount NFS and SMB shares?
+ MountBridge mounts NFS and SMB/CIFS shares through a small root helper that
+ only members of the "mountbridge" group may run.
+ .
+ If you accept, ${user} is added to that group; it takes effect at their next
+ login. Other users can be given access later with "adduser <user>
+ mountbridge", or from within MountBridge. SSHFS mounts need no special access.
+
+Template: mountbridge/installing-user
+Type: string
+Description: for internal use
+ The user who ran the installation, passed from the config script to postinst.

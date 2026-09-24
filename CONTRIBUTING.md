@@ -84,6 +84,25 @@ must be added to its allow-list deliberately.
 
 ---
 
+## Versioning and releases
+
+The version is set in two places, and `tests/test_packaging.py` fails if they
+disagree:
+
+1. `pyproject.toml` → `version = "X.Y.Z"` (the app reads it at runtime)
+2. `debian/changelog` → add an entry with `dch -v X.Y.Z` (package: devscripts)
+
+Also add a `## [X.Y.Z]` section to `CHANGELOG.md`. Pushing a `vX.Y.Z` tag makes
+CI build and install-test the `.deb` and attach it to a **draft** GitHub
+release, which you review and publish.
+
+## Debian package
+
+`make deb` builds it (install the build dependencies once with
+`sudo apt-get build-dep ./`). CI builds on Debian 12 and install-tests on
+Debian 12/13/testing and Ubuntu 22.04/24.04 — keep dependencies to package
+names available on all of them, and Python code compatible with 3.10.
+
 ## Pull requests
 
 1. Branch from `main`: `git checkout -b feature/my-thing`

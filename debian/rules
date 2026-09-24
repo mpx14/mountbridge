@@ -1,0 +1,26 @@
+#!/usr/bin/make -f
+
+export PYBUILD_NAME = mountbridge
+export PYBUILD_SYSTEM = pyproject
+# The tests live outside the package and also exercise the root helper in data/.
+export PYBUILD_BEFORE_TEST = cp -r {dir}/tests {dir}/data {build_dir}
+export PYBUILD_AFTER_TEST = rm -rf {build_dir}/tests {build_dir}/data
+export PYBUILD_TEST_PYTEST = 1
+
+PKG    = debian/mountbridge
+HELPER = /usr/libexec/mountbridge/mountbridge-helper
+
+%:
+	dh $@ --with python3 --buildsystem=pybuild
+
+execute_after_dh_auto_install:
+	install -D -m 0755 data/mountbridge-helper $(PKG)$(HELPER)
+	install -d $(PKG)/etc/sudoers.d
+	sed 's|@HELPER@|$(HELPER)|g' data/mountbridge.sudoers > $(PKG)/etc/sudoers.d/mountbridge
+	install -D -m 0644 data/mountbridge.desktop $(PKG)/usr/share/applications/mountbridge.desktop
+	install -D -m 0644 data/icons/mountbridge.svg \
+		$(PKG)/usr/share/icons/hicolor/scalable/apps/mountbridge.svg
+
+execute_after_dh_fixperms:
+	# sudo ignores (and complains about) sudoers.d files that aren't 0440
+	chmod 0440 $(PKG)/etc/sudoers.d/mountbridge

@@ -60,6 +60,7 @@ def test_sshfs_password_never_in_argv(monkeypatch, tmp_path):
 def test_smb_creds_go_to_helper_stdin(monkeypatch, tmp_path):
     calls = []
     monkeypatch.setattr(ops, "HELPER", "/bin/true")
+    monkeypatch.setattr(ops, "helper_access_problem", lambda: None)  # independent of host groups
     monkeypatch.setattr(ops, "SYS_MOUNT_BASE", tmp_path / "sys")
     monkeypatch.setattr(ops.subprocess, "run",
                         lambda cmd, **kw: calls.append((cmd, kw)) or
@@ -90,3 +91,82 @@ def test_keyring_failure_is_reported(monkeypatch, tmp_path):
     ok, msg = ops.MountOps(Broken()).mount(cfg(mount_type="smb", username="u",
                                                local_path=str(tmp_path / "l")))
     assert not ok and "Keyring" in msg
+
+
+def _group(monkeypatch, members, session_gids, exists=True):
+    import grp as _grp
+
+    def getgrnam(name):
+        if not exists:
+            raise KeyError(name)
+        return _grp.struct_group(("mountbridge", "x", 4242, members))
+
+    monkeypatch.setattr(ops.grp, "getgrnam", getgrnam)
+    monkeypatch.setattr(ops.os, "getgroups", lambda: session_gids)
+    monkeypatch.setattr(ops.os, "getgid", lambda: 1000)
+    monkeypatch.setattr(ops.pwd, "getpwuid",
+                        lambda uid: type("P", (), {"pw_name": "alice"})())
+
+
+def test_helper_access_in_group(monkeypatch):
+    _group(monkeypatch, ["alice"], [1000, 4242])
+    assert ops.helper_access_problem() is None
+
+
+def test_helper_access_needs_relogin(monkeypatch):
+    _group(monkeypatch, ["alice"], [1000])
+    assert "log out and back in" in ops.helper_access_problem()
+
+
+def test_helper_access_not_member(monkeypatch):
+    _group(monkeypatch, ["bob"], [1000])
+    msg = ops.helper_access_problem()
+    assert "sudo adduser alice mountbridge" in msg
+
+
+def test_helper_access_no_group_defers_to_sudo(monkeypatch):
+    _group(monkeypatch, [], [1000], exists=False)
+    assert ops.helper_access_problem() is None
+
+
+def test_helper_access_state(monkeypatch):
+    _group(monkeypatch, ["alice"], [1000, 4242])
+    assert ops.helper_access_state() == ops.ACCESS_OK
+    _group(monkeypatch, ["alice"], [1000])
+    assert ops.helper_access_state() == ops.ACCESS_RELOGIN
+    _group(monkeypatch, [], [1000])
+    assert ops.helper_access_state() == ops.ACCESS_NOT_MEMBER
+
+
+def _pkexec(monkeypatch, returncode, stderr="", installed=True):
+    calls = []
+    monkeypatch.setattr(ops.os.path, "exists", lambda p: installed if p == ops.PKEXEC else True)
+    monkeypatch.setattr(ops.subprocess, "run", lambda cmd, **kw: calls.append((cmd, kw)) or
+                        type("R", (), {"returncode": returncode, "stdout": "", "stderr": stderr})())
+    return calls
+
+
+def test_grant_runs_adduser_via_pkexec(monkeypatch):
+    calls = _pkexec(monkeypatch, 0)
+    ok, msg = ops.grant_helper_access("alice")
+    assert ok and "log" in msg
+    cmd, kw = calls[0]
+    assert cmd == ["/usr/bin/pkexec", "/usr/sbin/adduser", "alice", "mountbridge"]
+    assert kw["stdin"] is ops.subprocess.DEVNULL
+
+
+def test_grant_dismissed(monkeypatch):
+    _pkexec(monkeypatch, 126)
+    assert ops.grant_helper_access("alice") == (False, "Cancelled.")
+
+
+def test_grant_not_authorised_shows_manual_command(monkeypatch):
+    _pkexec(monkeypatch, 127)
+    ok, msg = ops.grant_helper_access("alice")
+    assert not ok and "sudo adduser alice mountbridge" in msg
+
+
+def test_grant_without_pkexec(monkeypatch):
+    calls = _pkexec(monkeypatch, 0, installed=False)
+    ok, msg = ops.grant_helper_access("alice")
+    assert not ok and not calls and "sudo adduser alice mountbridge" in msg

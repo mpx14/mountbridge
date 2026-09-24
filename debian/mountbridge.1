@@ -1,0 +1,68 @@
+.TH MOUNTBRIDGE 1 "September 2026" "mountbridge 1.2.0" "User Commands"
+.SH NAME
+mountbridge \- network mount manager for NFS, SMB/CIFS and SSHFS
+.SH SYNOPSIS
+.B mountbridge
+.RB [ \-\-hidden ]
+.RB [ \-\-version ]
+.RB [ \-\-help ]
+.SH DESCRIPTION
+.B mountbridge
+is a GTK3 application for managing network mounts. Mount definitions are
+stored in
+.IR ~/.config/mountbridge/mounts.json ;
+passwords are kept in the system keyring (Secret Service).
+.PP
+SSHFS mounts run as the user, at the configured local path (by default
+.IR ~/.mounts/<name> ).
+NFS and SMB/CIFS mounts are made by the root helper
+.I /usr/libexec/mountbridge/mountbridge\-helper
+at
+.IR /mnt/mountbridge/<user>/<name> ,
+with a shortcut at the configured local path. The helper allows only
+nfs, nfs4 and cifs, only allow-listed mount options, and always adds
+.BR nosuid , nodev .
+.SH OPTIONS
+.TP
+.B \-\-hidden
+Start minimised to the system tray.
+.TP
+.B \-\-version
+Print the version and exit.
+.TP
+.B \-\-help
+Print a usage summary and exit.
+.SH NFS/SMB ACCESS
+Members of the
+.B mountbridge
+group may run the helper through
+.BR sudo (8),
+as configured in
+.IR /etc/sudoers.d/mountbridge .
+The user who installs the package through
+.BR sudo (8)
+is asked whether to join the group. Otherwise, a user can request access
+from within MountBridge (an administrator's password is required), an
+administrator can run
+.B dpkg\-reconfigure mountbridge
+to be asked again, or add any user with:
+.PP
+.RS
+.B adduser
+.I user
+.B mountbridge
+.RE
+.PP
+The change takes effect at the user's next login.
+.SH FILES
+.TP
+.I ~/.config/mountbridge/mounts.json
+Mount definitions.
+.TP
+.I /etc/sudoers.d/mountbridge
+Grants the mountbridge group use of the root helper.
+.SH SEE ALSO
+.BR mount.nfs (8),
+.BR mount.cifs (8),
+.BR sshfs (1),
+.BR sudoers (5)

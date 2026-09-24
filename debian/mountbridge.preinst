@@ -1,0 +1,16 @@
+#!/bin/sh
+set -e
+
+# A source install (install.sh) writes /etc/sudoers.d/mountbridge itself, and
+# MountBridge 1.1 wrote an unsafe version of it. On first install of the
+# package, remove such a file so dpkg installs its own without a conffile
+# prompt. Only files recognisably written by those installers are touched.
+if [ "$1" = install ] && [ -f /etc/sudoers.d/mountbridge ] && \
+   grep -qE '/usr/local/libexec/mountbridge-helper|NOPASSWD: .*mount -t (nfs|cifs)' \
+       /etc/sudoers.d/mountbridge; then
+    rm -f /etc/sudoers.d/mountbridge
+fi
+
+#DEBHELPER#
+
+exit 0

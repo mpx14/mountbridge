@@ -1,4 +1,4 @@
-.PHONY: help install install-dev lint fmt typecheck test check clean dist uninstall
+.PHONY: help install install-dev lint fmt typecheck test check clean dist deb uninstall
 
 PYTHON  ?= python3
 VENV    ?= .venv
@@ -23,6 +23,8 @@ help:
 	@echo "  make check          lint + test (what CI runs)"
 	@echo "  make clean          Remove build artefacts"
 	@echo "  make dist           Build source + wheel distributions"
+	@echo "  make deb            Build dist/mountbridge_$(VERSION)_all.deb"
+	@echo "                      (first: sudo apt-get build-dep ./)"
 	@echo "  make uninstall      Uninstall the package"
 	@echo ""
 
@@ -50,11 +52,20 @@ test:
 check: lint test
 
 clean:
-	rm -rf dist/ build/ *.egg-info .pytest_cache .ruff_cache
+	rm -rf dist/ build/ *.egg-info .pytest_cache .ruff_cache .pybuild
+	rm -rf debian/.debhelper debian/mountbridge debian/files debian/*.substvars \
+		debian/*.debhelper debian/*.debhelper.log debian/debhelper-build-stamp
 	find . -name __pycache__ -type d -prune -exec rm -rf {} +
 
 dist: clean
 	$(PY) -m build
+
+deb:
+	dpkg-buildpackage -us -uc -b
+	mkdir -p dist
+	mv ../mountbridge_$(VERSION)_all.deb dist/
+	rm -f ../mountbridge_$(VERSION)_*.buildinfo ../mountbridge_$(VERSION)_*.changes
+	@echo "Built dist/mountbridge_$(VERSION)_all.deb"
 
 uninstall:
 	pipx uninstall $(PKG)

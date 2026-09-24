@@ -1,0 +1,51 @@
+Source: mountbridge
+Section: utils
+Priority: optional
+Maintainer: Ben <ben@mutefx.net>
+Build-Depends:
+ debhelper-compat (= 13),
+ dh-python,
+ po-debconf,
+ pybuild-plugin-pyproject,
+ python3-all,
+ python3-setuptools,
+ python3-pytest <!nocheck>,
+Standards-Version: 4.6.2
+Rules-Requires-Root: no
+Homepage: https://github.com/mpx14/mountbridge
+Vcs-Browser: https://github.com/mpx14/mountbridge
+Vcs-Git: https://github.com/mpx14/mountbridge.git
+
+Package: mountbridge
+Architecture: all
+Depends:
+ ${misc:Depends},
+ ${python3:Depends},
+ adduser,
+ cifs-utils,
+ gir1.2-gtk-3.0,
+ gir1.2-notify-0.7,
+ nfs-common,
+ python3-gi,
+ python3-keyring,
+ sshfs,
+ sudo | sudo-rs,
+Recommends:
+ avahi-utils,
+ gir1.2-ayatanaappindicator3-0.1 | gir1.2-appindicator3-0.1,
+ gnome-keyring | keepassxc | kwalletmanager,
+ pkexec,
+ smbclient,
+ xdg-utils,
+Description: network mount manager for NFS, SMB/CIFS and SSHFS
+ MountBridge is a GTK3 desktop application, designed for Xfce, for managing
+ network mounts. It mounts NFS exports, SMB/CIFS shares and SSHFS
+ connections, keeps passwords in the system keyring, shows mounts made
+ outside the application, and can discover SMB and NFS servers on the
+ local network.
+ .
+ NFS and SMB mounts go through a small validating root helper that members
+ of the "mountbridge" group may run via sudo. The installing user is offered
+ access during installation; other users can request it from within the
+ application (administrator password required) or be added with
+ "adduser <user> mountbridge". SSHFS mounts need no privileges.

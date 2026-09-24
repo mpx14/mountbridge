@@ -43,3 +43,13 @@ mountbridge/.creds_*
 *.tar.gz
 *.zip
 MANIFEST
+
+# Debian package build
+.pybuild/
+debian/.debhelper/
+debian/mountbridge/
+debian/files
+debian/*.substvars
+debian/*.debhelper
+debian/*.debhelper.log
+debian/debhelper-build-stamp

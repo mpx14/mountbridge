@@ -1,0 +1,28 @@
+#!/bin/sh
+set -e
+
+. /usr/share/debconf/confmodule
+
+if [ "$1" = configure ]; then
+    # Members of this group may run the NFS/SMB helper (see /etc/sudoers.d/mountbridge).
+    if ! getent group mountbridge >/dev/null; then
+        addgroup --system --quiet mountbridge
+    fi
+
+    # Set by the config script only if the question was shown to the installing user.
+    db_get mountbridge/installing-user
+    user="$RET"
+    if [ -n "$user" ]; then
+        db_get mountbridge/add-installing-user
+        if [ "$RET" = true ] && getent passwd "$user" >/dev/null; then
+            adduser --quiet "$user" mountbridge >&2
+            echo "mountbridge: added $user to the 'mountbridge' group;" \
+                 "log out and back in to mount NFS/SMB shares." >&2
+        fi
+        db_set mountbridge/installing-user ""
+    fi
+fi
+
+#DEBHELPER#
+
+exit 0
