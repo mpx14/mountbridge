@@ -7,6 +7,8 @@
 ![GTK](https://img.shields.io/badge/GTK-3.0-green)
 ![Platform](https://img.shields.io/badge/platform-Debian%20%2F%20XFCE-orange)
 
+![MountBridge main window with NFS, SMB and SSHFS mounts](docs/screenshot.png)
+
 ---
 
 ## Features
