@@ -1,4 +1,4 @@
-mountbridge (1.2.0) unstable; urgency=medium
+mountbridge (1.2.0) unstable; urgency=high
 
   * First Debian package. Upstream changes are in CHANGELOG.md; notably,
     1.2.0 replaces the 1.1 sudoers rule, which allowed root escalation,
@@ -6,4 +6,4 @@ mountbridge (1.2.0) unstable; urgency=medium
   * Ask the installing user whether to join the 'mountbridge' group; never
     add anyone during unattended installs.
 
- -- Ben <ben@mutefx.net>  Wed, 23 Sep 2026 12:00:00 +0000
+ -- Ben <ben@mutefx.net>  Thu, 24 Sep 2026 12:00:00 +0000

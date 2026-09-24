@@ -5,7 +5,11 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ---
 
-## [1.2.0] — Unreleased
+## [Unreleased]
+
+---
+
+## [1.2.0] — 2026-09-24
 
 ### Security
 - **Replaced the sudoers rule.** The 1.1 rule granted `mount`/`umount` with
@@ -135,5 +139,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Ctrl+N keyboard shortcut to add a mount
 - `install.sh` with interactive sudoers and FUSE configuration
 
-[1.2.0]: https://github.com/mpx14/mountbridge/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/mpx14/mountbridge/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/mpx14/mountbridge/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/mpx14/mountbridge/releases/tag/v1.1.0
