@@ -89,13 +89,20 @@ jobs:
           test ! -e /etc/sudoers.d/mountbridge
           test ! -e /usr/libexec/mountbridge/mountbridge-helper
 
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+          path: src
+
       - name: Install-time question
         run: |
           set -x
           ingroup() { id -nG "$1" | tr ' ' '\n' | grep -qx mountbridge; }
-          # Installed via sudo by a regular user who answers yes: added.
+          apt-get install -y --no-install-recommends python3   # for the pty helper
+          # Installed via sudo by a regular user who answers yes: added. CI has no
+          # terminal, so the helper provides one and answers once the prompt shows.
           useradd -m asker
-          printf 'yes\n' | SUDO_USER=asker DEBIAN_FRONTEND=teletype \
+          SUDO_USER=asker DEBIAN_FRONTEND=teletype python3 src/.github/scripts/answer-debconf.py yes \
             apt-get install -y --no-install-recommends ./mountbridge_*_all.deb
           ingroup asker
           apt-get purge -y mountbridge
