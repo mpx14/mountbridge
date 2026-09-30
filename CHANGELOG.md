@@ -7,6 +7,23 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- **Credentialed SMB share browsing.** "SMB shares on host" now takes a
+  username, password and optional domain, so NAS boxes that refuse anonymous
+  listing (e.g. QNAP) show their shares. Login and connection failures are
+  reported (`Login failed`, `Host unreachable`, …) instead of "no shares".
+- Broadcast hits get a **Browse Shares** button that switches to share listing
+  for that host.
+- Each discovered share shows the local path it would be mounted at, and
+  shares that are already configured show **Added** instead of Add Mount.
+- The Add dialog opened from discovery is pre-filled with the share name,
+  proposed local path, and the credentials used for listing (the password
+  is saved to the keyring as usual, never to mounts.json).
+
+### Changed
+- New mounts default to `~/mnt/<name>` instead of `~/.mounts/<name>`.
+  Existing mounts keep the paths stored in their config.
+
 ---
 
 ## [1.2.0] — 2026-09-24

@@ -182,7 +182,7 @@ class MountOps:
                              m.options or NFS_DEFAULT_OPTS])
 
     def _link(self, m: MountConfig):
-        """Point ~/.mounts/<name> (the configured local path) at the real mountpoint."""
+        """Point ~/mnt/<name> (the configured local path) at the real mountpoint."""
         link, target = Path(_norm(m.local_path)), self.mountpoint(m)
         try:
             if link.is_symlink():

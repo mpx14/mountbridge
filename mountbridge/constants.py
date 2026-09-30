@@ -12,12 +12,12 @@ except PackageNotFoundError:               # running from a source tree without 
     APP_VERSION = "unknown"
 
 CONFIG_DIR  = Path.home() / ".config" / "mountbridge"
-MOUNTS_DIR  = Path.home() / ".mounts"
+MOUNTS_DIR  = Path.home() / "mnt"
 CONFIG_FILE = CONFIG_DIR / "mounts.json"
 KEYRING_SVC = "mountbridge"
 
 # Root helper for NFS/SMB (see data/mountbridge-helper). NFS/SMB mounts live in a
-# root-owned tree; ~/.mounts/<name> is a convenience symlink into it.
+# root-owned tree; ~/mnt/<name> is a convenience symlink into it.
 # The .deb installs it under /usr/libexec; install.sh (source installs) under
 # /usr/local/libexec. Members of HELPER_GROUP may run it via sudo.
 HELPER_PATHS    = ("/usr/libexec/mountbridge/mountbridge-helper",

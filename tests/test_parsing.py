@@ -2,6 +2,7 @@ from mountbridge.parsing import (
     parse_avahi,
     parse_mountinfo,
     parse_showmount,
+    parse_smb_error,
     parse_smbclient,
     slugify,
     unescape,
@@ -67,3 +68,9 @@ def test_parse_smbclient_grepable():
 def test_parse_showmount():
     out = "/export/data 192.168.1.0/24\n/export/with space *\n/bare\nclnt_create: RPC error\n"
     assert parse_showmount(out) == ["/export/data", "/export/with space", "/bare"]
+
+
+def test_parse_smb_error():
+    assert parse_smb_error("session setup failed: NT_STATUS_LOGON_FAILURE\n").startswith("Login failed")
+    assert parse_smb_error("do_connect: NT_STATUS_SOMETHING_NEW") == "NT_STATUS_SOMETHING_NEW"
+    assert parse_smb_error("Disk|Public|System default share\n") is None
