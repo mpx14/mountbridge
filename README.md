@@ -63,7 +63,7 @@ and distributions based on them (Linux Mint, Pop!_OS, …). Download
 [Releases](https://github.com/mpx14/mountbridge/releases) page, then:
 
 ```bash
-sudo apt install ./mountbridge_1.2.0_all.deb
+sudo apt install ./mountbridge_1.3.0_all.deb
 ```
 
 `apt` pulls in all dependencies. The package installs the app, the NFS/SMB root
@@ -90,7 +90,7 @@ rm -f ~/.local/share/applications/mountbridge.desktop \
       ~/.local/share/icons/hicolor/scalable/apps/mountbridge.svg
 sudo rm -f /usr/local/libexec/mountbridge-helper
 sed -i 's|^Exec=.*|Exec=mountbridge --hidden|' ~/.config/autostart/mountbridge.desktop  # if you use autostart
-sudo apt install ./mountbridge_1.2.0_all.deb
+sudo apt install ./mountbridge_1.3.0_all.deb
 ```
 
 The package replaces the sudoers rule written by `install.sh` (or by 1.1)

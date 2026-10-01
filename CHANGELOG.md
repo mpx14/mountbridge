@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+---
+
+## [1.3.0] — 2026-10-01
+
 ### Added
 - **Credentialed SMB share browsing.** "SMB shares on host" now takes a
   username, password and optional domain, so NAS boxes that refuse anonymous
@@ -156,6 +160,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Ctrl+N keyboard shortcut to add a mount
 - `install.sh` with interactive sudoers and FUSE configuration
 
-[Unreleased]: https://github.com/mpx14/mountbridge/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/mpx14/mountbridge/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/mpx14/mountbridge/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/mpx14/mountbridge/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/mpx14/mountbridge/releases/tag/v1.1.0
