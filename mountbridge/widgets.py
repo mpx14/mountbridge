@@ -257,11 +257,14 @@ class MountDialog(Gtk.Dialog):
 
 class MountCard(Gtk.ListBoxRow):
     def __init__(self, mount: MountConfig, on_toggle: Callable, on_open: Callable,
-                 on_edit: Callable, on_delete: Callable):
+                 on_edit: Callable, on_delete: Callable,
+                 on_bookmark: Optional[Callable] = None, bookmarked: bool = False):
         super().__init__()
         self.mount = mount
+        self._on_bookmark = on_bookmark
         _css(self, "mb-card")
         self._build(on_toggle, on_open, on_edit, on_delete)
+        self.set_bookmarked(bookmarked)
 
     def _build(self, on_toggle, on_open, on_edit, on_delete):
         m = self.mount
@@ -318,6 +321,13 @@ class MountCard(Gtk.ListBoxRow):
         spacer.set_hexpand(True)
         acts.pack_start(spacer, True, True, 0)
 
+        self.bm_btn = Gtk.ToggleButton()
+        self.bm_btn.set_image(Gtk.Image.new_from_icon_name("user-bookmarks-symbolic",
+                                                           Gtk.IconSize.SMALL_TOOLBAR))
+        self._bm_handler = self.bm_btn.connect("toggled", self._bm_toggled)
+        self.bm_btn.set_no_show_all(self._on_bookmark is None)
+        acts.pack_start(self.bm_btn, False, False, 0)
+
         for icon, tip, cb in (("document-edit-symbolic", "Edit", on_edit),
                               ("user-trash-symbolic", "Remove", on_delete)):
             b = Gtk.Button()
@@ -327,6 +337,17 @@ class MountCard(Gtk.ListBoxRow):
             acts.pack_start(b, False, False, 0)
 
         self.show_all()
+
+    def _bm_toggled(self, btn):
+        if self._on_bookmark:
+            self._on_bookmark(self.mount, btn.get_active())
+
+    def set_bookmarked(self, on: bool):
+        """Reflect bookmark state without re-triggering the callback."""
+        with self.bm_btn.handler_block(self._bm_handler):
+            self.bm_btn.set_active(on)
+        self.bm_btn.set_tooltip_text("Remove from file manager sidebar" if on
+                                     else "Show in file manager sidebar")
 
     def update(self, mounted: bool, busy: bool):
         ctx = self.dot.get_style_context()

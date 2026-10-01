@@ -22,9 +22,33 @@
 | **Auto-mount** | Per-mount toggle; runs when MountBridge starts, waiting for the network if needed |
 | **XFCE native** | Uses xfwm4 server-side decorations (no GTK CSD) — title bar, min/max/close behave normally |
 | **System tray** | Ayatana AppIndicator3 with Open/Quit menu; falls back to `Gtk.StatusIcon`. Closing the window keeps MountBridge running in the tray |
+| **File manager integration** | **Open Folder** opens a mount in Thunar (or your default file manager); the bookmark toggle adds it to the file manager's side pane |
 | **Notifications** | libnotify desktop notification on mount/unmount success or failure |
 | **Keyboard shortcuts** | Ctrl+N — add a mount · Ctrl+Q — quit |
 | **Least privilege** | NFS/SMB go through a small validating root helper; SSHFS never uses root |
+
+---
+
+## Why not just use Thunar / GVfs?
+
+If you only open a share now and then, Thunar's `smb://` / `sftp://` locations
+are fine and you don't need MountBridge. The difference is what kind of mount
+you get:
+
+| | Thunar / GVfs | MountBridge |
+|---|---|---|
+| **Mount** | GVfs userspace daemon | Kernel NFS / CIFS mount (SSHFS via FUSE) |
+| **Path** | Auto-generated, e.g. `/run/user/1000/gvfs/smb-share:server=nas,share=media` | `~/mnt/<name>` |
+| **Apps that don't use GIO** (shell, rsync, Wine, media players, IDEs) | Go through GVfs's FUSE bridge — typically slower, with weaker locking and `mmap` behaviour | See an ordinary directory |
+| **NFS** | Userspace `libnfs` backend | Kernel NFS client |
+| **Mount options** | None exposed | Allow-listed NFS/CIFS options (`vers`, `sec`, `rsize`/`wsize`, `nconnect`, `cache`, `file_mode`, …) |
+| **Mount at login** | No | Per-mount auto-mount |
+| **Other protocols** | FTP, WebDAV, MTP, AFP, … | Not in scope |
+
+The two work together rather than compete: **Open Folder** opens a mount in
+Thunar, and the bookmark toggle on each mount adds it to Thunar's side pane.
+That matters for NFS/SMB, whose real mountpoints live under
+`/mnt/mountbridge/` and don't appear there on their own.
 
 ---
 
