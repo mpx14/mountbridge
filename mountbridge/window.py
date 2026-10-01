@@ -162,7 +162,7 @@ class MainWindow(Gtk.ApplicationWindow):
         self.status_lbl.get_style_context().add_class("mb-statusbar")
         mp.pack_start(self.status_lbl, False, False, 0)
 
-        self.stack.add_named(DiscoveryPanel(self.disc, self._add_discovered), "discovery")
+        self.stack.add_named(DiscoveryPanel(self.disc, self._add_discovered, self._propose_discovered), "discovery")
 
         # Sidebar last: its row-selected handler touches self.lb / self.stack.
         root.pack_start(self._build_sidebar(), False, True, 0)
@@ -619,13 +619,39 @@ class MainWindow(Gtk.ApplicationWindow):
         if v:
             self._save_new(v)
 
-    def _add_discovered(self, host, path, mtype):
+    @staticmethod
+    def _discovered_name(host: str, path: Optional[str]) -> str:
+        """Display name for a discovered share: its last path component, else the host."""
+        leaf = (path or "").strip("/").rsplit("/", 1)[-1]
+        return leaf or host
+
+    def _find_configured(self, host: str, path: Optional[str], mtype: str):
+        want = (path or "").strip("/")
+        for m in self.cfg.mounts:
+            if (m.mount_type == mtype and m.host.lower() == host.lower()
+                    and m.remote_path.strip("/") == want):
+                return m
+        return None
+
+    def _propose_discovered(self, host, path, mtype):
+        """(local path a new mount would get, name of an existing mount for this share or None)."""
+        existing = self._find_configured(host, path, mtype)
+        if existing:
+            return os.path.expanduser(existing.local_path), existing.name
+        taken = {os.path.expanduser(m.local_path) for m in self.cfg.mounts}
+        return default_local_path(self._discovered_name(host, path), taken), None
+
+    def _add_discovered(self, host, path, mtype, creds=None):
         if not valid_host(host):
             self._error_dialog("Invalid host", f"Discovery returned an invalid hostname: {host!r}")
             return
-        prefill = MountConfig(id="", name=f"{host} {path or ''}".strip(), mount_type=mtype,
-                              host=host, remote_path=path or "", local_path="")
-        v = self._run_dialog(MountDialog(self, prefill=prefill))
+        creds = creds or {}
+        local, _ = self._propose_discovered(host, path, mtype)
+        prefill = MountConfig(id="", name=self._discovered_name(host, path), mount_type=mtype,
+                              host=host, remote_path=path or "", local_path=local,
+                              username=creds.get("username"), domain=creds.get("domain"))
+        v = self._run_dialog(MountDialog(self, prefill=prefill,
+                                         password=creds.get("password") or ""))
         if v:
             self._save_new(v)
             self._show_mounts()

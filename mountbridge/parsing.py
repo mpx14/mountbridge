@@ -105,6 +105,30 @@ def parse_smbclient(stdout: str) -> list[str]:
     return shares
 
 
+_NT_STATUS = re.compile(r"NT_STATUS_[A-Z0-9_]+")
+
+_SMB_ERRORS = {
+    "NT_STATUS_LOGON_FAILURE":         "Login failed — check the username, password and domain.",
+    "NT_STATUS_ACCESS_DENIED":         "Access denied — this account may not list shares.",
+    "NT_STATUS_ACCOUNT_DISABLED":      "This account is disabled on the server.",
+    "NT_STATUS_ACCOUNT_LOCKED_OUT":    "This account is locked out on the server.",
+    "NT_STATUS_PASSWORD_EXPIRED":      "The password has expired on the server.",
+    "NT_STATUS_HOST_UNREACHABLE":      "Host unreachable.",
+    "NT_STATUS_IO_TIMEOUT":            "Timed out connecting to the host.",
+    "NT_STATUS_CONNECTION_REFUSED":    "Connection refused — is SMB enabled on the host?",
+    "NT_STATUS_BAD_NETWORK_NAME":      "The server has no such share.",
+    "NT_STATUS_UNSUCCESSFUL":          "Could not connect to the host.",
+}
+
+
+def parse_smb_error(output: str) -> str | None:
+    """Turn smbclient's NT_STATUS_* output into a user-facing message, or None if no error."""
+    m = _NT_STATUS.search(output)
+    if not m:
+        return None
+    return _SMB_ERRORS.get(m.group(0), m.group(0))
+
+
 def parse_showmount(stdout: str) -> list[str]:
     """Parse `showmount -e --no-headers host` output. Export paths may contain spaces."""
     exports = []

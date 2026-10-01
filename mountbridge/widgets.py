@@ -30,12 +30,15 @@ def _css(widget, *classes):
 # ── Add / Edit mount dialog ──────────────────────────────────────────────────
 
 class MountDialog(Gtk.Dialog):
-    def __init__(self, parent, mount: Optional[MountConfig] = None, prefill=None):
+    def __init__(self, parent, mount: Optional[MountConfig] = None, prefill=None,
+                 password: str = ""):
         super().__init__(transient_for=parent, modal=True, use_header_bar=True)
         self.set_title("Edit Mount" if mount else "Add Mount")
         self.set_default_size(500, -1)
         self.edit = mount
         self._build(mount or prefill)
+        if password and not mount:
+            self.pass_e.set_text(password)  # carried over from discovery; saved to keyring
 
     def _build(self, m=None):
         self.add_button("Cancel", Gtk.ResponseType.CANCEL)
@@ -426,10 +429,22 @@ class UnmanagedMountCard(Gtk.ListBoxRow):
 # ── Network discovery panel ──────────────────────────────────────────────────
 
 class DiscoveryPanel(Gtk.Box):
-    def __init__(self, disc: Discovery, on_add: Callable):
+    """Scan the network and offer each share/export as a ready-to-add mount.
+
+    on_add(host, path, mtype, creds) opens the add dialog; creds is a dict with
+    username/password/domain used for the SMB listing, so they needn't be retyped.
+    propose(host, path, mtype) -> (local_path, existing_name|None) previews where
+    a new mount would go and flags shares that are already configured.
+    """
+
+    MODE_BROADCAST, MODE_SMB, MODE_NFS = range(3)
+
+    def __init__(self, disc: Discovery, on_add: Callable, propose: Callable):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         self.disc = disc
         self.on_add = on_add
+        self.propose = propose
+        self._creds = {"username": None, "password": "", "domain": None}
         self._build()
 
     def _build(self):
@@ -437,13 +452,13 @@ class DiscoveryPanel(Gtk.Box):
         tb.set_margin_start(12)
         tb.set_margin_end(12)
         tb.set_margin_top(14)
-        tb.set_margin_bottom(10)
+        tb.set_margin_bottom(6)
         self.pack_start(tb, False, False, 0)
 
         self.mode_combo = Gtk.ComboBoxText()
         for t in ["SMB broadcast", "SMB shares on host", "NFS exports on host"]:
             self.mode_combo.append_text(t)
-        self.mode_combo.set_active(0)
+        self.mode_combo.set_active(self.MODE_BROADCAST)
         self.mode_combo.connect("changed", self._mode_changed)
         tb.pack_start(self.mode_combo, False, False, 0)
 
@@ -460,6 +475,29 @@ class DiscoveryPanel(Gtk.Box):
 
         self.spinner = Gtk.Spinner()
         tb.pack_start(self.spinner, False, False, 0)
+
+        # Credentials for listing SMB shares (most NAS boxes refuse anonymous listing).
+        self.creds_row = Gtk.Box(spacing=8)
+        self.creds_row.set_margin_start(12)
+        self.creds_row.set_margin_end(12)
+        self.creds_row.set_margin_bottom(10)
+        self.creds_row.set_no_show_all(True)
+        self.pack_start(self.creds_row, False, False, 0)
+        self.user_e = Gtk.Entry()
+        self.user_e.set_placeholder_text("Username (blank = anonymous)")
+        self.user_e.set_hexpand(True)
+        self.pass_e = Gtk.Entry()
+        self.pass_e.set_placeholder_text("Password")
+        self.pass_e.set_visibility(False)
+        self.pass_e.set_hexpand(True)
+        self.domain_e = Gtk.Entry()
+        self.domain_e.set_placeholder_text("Domain (optional)")
+        self.domain_e.set_width_chars(14)
+        for e in (self.user_e, self.pass_e, self.domain_e):
+            e.connect("activate", self._scan)
+            e.show()
+            self.creds_row.pack_start(e, e is not self.domain_e, True, 0)
+
         self.pack_start(Gtk.Separator(), False, False, 0)
 
         scroll = Gtk.ScrolledWindow()
@@ -474,7 +512,10 @@ class DiscoveryPanel(Gtk.Box):
         self.show_all()
 
     def _mode_changed(self, combo):
-        self.host_e.set_visible(combo.get_active() in (1, 2))
+        mode = combo.get_active()
+        self.host_e.set_visible(mode in (self.MODE_SMB, self.MODE_NFS))
+        self.creds_row.set_visible(mode == self.MODE_SMB)
+        self.scan_btn.set_label("Scan Network" if mode == self.MODE_BROADCAST else "List")
 
     def _clear(self):
         for r in self.lb.get_children():
@@ -499,16 +540,31 @@ class DiscoveryPanel(Gtk.Box):
         self._clear()
         mode = self.mode_combo.get_active()
         host = self.host_e.get_text().strip()
-        if mode in (1, 2) and not valid_host(host):
+        if mode in (self.MODE_SMB, self.MODE_NFS) and not valid_host(host):
             self._add_hint("Enter a valid hostname or IP address first.")
             return
         self._busy(True)
-        if mode == 0:
+        if mode == self.MODE_BROADCAST:
             self.disc.smb_broadcast(self._on_broadcast)
-        elif mode == 1:
-            self.disc.smb_shares(host, "", "", self._on_smb_shares)
+        elif mode == self.MODE_SMB:
+            self._creds = {
+                "username": self.user_e.get_text().strip() or None,
+                "password": self.pass_e.get_text(),
+                "domain":   self.domain_e.get_text().strip() or None,
+            }
+            self.disc.smb_shares(host, self._creds["username"] or "", self._creds["password"],
+                                 self._on_smb_shares, domain=self._creds["domain"] or "")
         else:
             self.disc.nfs_exports(host, self._on_nfs_exports)
+
+    def _browse_host(self, host):
+        """From a broadcast hit, switch to share listing for that host."""
+        self.host_e.set_text(host)
+        self.mode_combo.set_active(self.MODE_SMB)
+        self._clear()
+        self._add_hint(f"Enter credentials for {host} (or leave blank for anonymous), "
+                       "then press List.")
+        (self.user_e if not self.user_e.get_text() else self.scan_btn).grab_focus()
 
     def _on_broadcast(self, results):
         self._busy(False)
@@ -516,16 +572,22 @@ class DiscoveryPanel(Gtk.Box):
             self._add_hint("No SMB hosts found via Avahi. Try specifying a host directly.")
             return
         for r in results:
-            self._result_row(r["host"], None, "smb", r.get("detail", ""))
+            self._host_row(r["host"], r.get("detail", ""))
         self.lb.show_all()
 
-    def _on_smb_shares(self, host, shares):
+    def _on_smb_shares(self, host, shares, error=None):
         self._busy(False)
         if not shares:
-            self._add_hint(f"No shares found on {host} (anonymous listing may be disabled).")
+            if error:
+                self._add_hint(f"{host}: {error}")
+            elif not self._creds["username"]:
+                self._add_hint(f"No shares listed anonymously on {host}. "
+                               "Enter a username and password and try again.")
+            else:
+                self._add_hint(f"No shares found on {host}.")
             return
-        for s in shares:
-            self._result_row(host, s, "smb", f"\\\\{host}\\{s}")
+        for sh in shares:
+            self._result_row(host, sh, "smb", f"\\\\{host}\\{sh}")
         self.lb.show_all()
 
     def _on_nfs_exports(self, host, exports):
@@ -538,14 +600,13 @@ class DiscoveryPanel(Gtk.Box):
             self._result_row(host, p, "nfs", f"{host}:{p}")
         self.lb.show_all()
 
-    def _result_row(self, host, path, mtype, detail):
+    def _row_shell(self, host, detail, mtype):
         row = Gtk.ListBoxRow()
         box = _css(Gtk.Box(spacing=12), "mb-disc-row")
         row.add(box)
         icons = {"smb": "network-workgroup-symbolic", "nfs": "drive-harddisk-symbolic"}
         box.pack_start(Gtk.Image.new_from_icon_name(
             icons.get(mtype, "network-server-symbolic"), Gtk.IconSize.BUTTON), False, False, 0)
-
         info = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         info.set_hexpand(True)
         box.pack_start(info, True, True, 0)
@@ -553,17 +614,35 @@ class DiscoveryPanel(Gtk.Box):
         if detail:
             info.pack_start(_css(Gtk.Label(label=detail, xalign=0), "mb-disc-detail"),
                             False, False, 0)
-
         box.pack_start(_css(Gtk.Label(label=mtype.upper()), "mb-type", f"mb-type-{mtype}"),
                        False, False, 0)
-        add_btn = Gtk.Button(label="Add Mount")
-        add_btn.connect("clicked", lambda _, h=host, p=path, t=mtype: self.on_add(h, p, t))
-        box.pack_start(add_btn, False, False, 0)
         self.lb.add(row)
+        return box
+
+    def _host_row(self, host, detail):
+        box = self._row_shell(host, detail, "smb")
+        btn = Gtk.Button(label="Browse Shares")
+        btn.connect("clicked", lambda _, h=host: self._browse_host(h))
+        box.pack_start(btn, False, False, 0)
+
+    def _result_row(self, host, path, mtype, detail):
+        local, existing = self.propose(host, path, mtype)
+        home = str(Path.home())
+        shown = "~" + local[len(home):] if local.startswith(home + "/") else local
+        box = self._row_shell(host, f"{detail}  →  {shown}" if not existing else detail, mtype)
+        if existing:
+            btn = Gtk.Button(label="Added")
+            btn.set_sensitive(False)
+            btn.set_tooltip_text(f"Already configured as \"{existing}\"")
+        else:
+            btn = Gtk.Button(label="Add Mount")
+            btn.connect("clicked", lambda _, h=host, p=path, t=mtype:
+                        self.on_add(h, p, t, dict(self._creds) if t == "smb" else {}))
+        box.pack_start(btn, False, False, 0)
 
 
 def default_local_path(name: str, taken: set) -> str:
-    """~/.mounts/<slug>, suffixed -2, -3… if another mount already uses it."""
+    """~/mnt/<slug>, suffixed -2, -3… if another mount already uses it."""
     base = slugify(name)
     candidate, n = base, 2
     while str(MOUNTS_DIR / candidate) in taken:

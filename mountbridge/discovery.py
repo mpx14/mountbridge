@@ -10,16 +10,25 @@ import threading
 
 from gi.repository import GLib
 
-from .parsing import parse_avahi, parse_showmount, parse_smbclient, valid_host
+from .parsing import parse_avahi, parse_showmount, parse_smb_error, parse_smbclient, valid_host
 
 
-def _run(cmd, timeout=10) -> str:
+def _run_full(cmd, timeout=10) -> tuple[str, str]:
+    """Run cmd; return (stdout, stderr). Never raises; a missing binary is reported in stderr."""
     try:
         r = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True,
                            text=True, timeout=timeout)
-        return r.stdout
-    except (OSError, subprocess.SubprocessError):
-        return ""
+        return r.stdout, r.stderr
+    except FileNotFoundError:
+        return "", f"{cmd[0]} not found"
+    except subprocess.TimeoutExpired:
+        return "", "NT_STATUS_IO_TIMEOUT"
+    except (OSError, subprocess.SubprocessError) as e:
+        return "", str(e)
+
+
+def _run(cmd, timeout=10) -> str:
+    return _run_full(cmd, timeout)[0]
 
 
 def _thread(fn):
@@ -36,11 +45,14 @@ class Discovery:
             GLib.idle_add(cb, parse_avahi(out))
         _thread(_work)
 
-    def smb_shares(self, host: str, user: str, pw: str, cb):
-        """List shares on an SMB host. Anonymous unless user is given."""
+    def smb_shares(self, host: str, user: str, pw: str, cb, domain: str = ""):
+        """List shares on an SMB host. Anonymous unless user is given.
+
+        cb(host, shares, error) — error is a user-facing message or None.
+        """
         def _work():
             if not valid_host(host):
-                GLib.idle_add(cb, host, [])
+                GLib.idle_add(cb, host, [], "Invalid hostname.")
                 return
             authfile = None
             try:
@@ -50,14 +62,19 @@ class Discovery:
                     fd, authfile = tempfile.mkstemp(dir=rundir, prefix="mountbridge-smb-")
                     with os.fdopen(fd, "w") as f:
                         f.write(f"username={user}\npassword={pw or ''}\n")
+                        if domain:
+                            f.write(f"domain={domain}\n")
                     auth = ["-A", authfile]
                 else:
                     auth = ["-N"]
-                out = _run(["smbclient", "-g", "-L", host] + auth)
+                out, err = _run_full(["smbclient", "-g", "-L", host] + auth, timeout=15)
             finally:
                 if authfile:
                     os.unlink(authfile)
-            GLib.idle_add(cb, host, parse_smbclient(out))
+            shares = parse_smbclient(out)
+            error = None if shares else (parse_smb_error(err + out)
+                                         or (err.strip().splitlines() or [None])[-1])
+            GLib.idle_add(cb, host, shares, error)
         _thread(_work)
 
     def nfs_exports(self, host: str, cb):

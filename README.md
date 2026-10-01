@@ -122,7 +122,7 @@ The installer will:
 
 1. Install the `apt` dependencies
 2. Install the `mountbridge` Python package with `pipx` (its venv can see apt's `python3-gi`)
-3. Create `~/.mounts/` and `~/.config/mountbridge/`
+3. Create `~/mnt/` and `~/.config/mountbridge/`
 4. Install the `.desktop` entry and SVG icon
 5. Optionally create an autostart entry (starts minimised to the tray)
 6. Optionally install the NFS/SMB root helper and sudoers rule, create the
@@ -154,7 +154,8 @@ The helper is the security boundary. It:
 - reads SMB credentials from stdin and never from the command line;
 - unmounts only nfs/cifs mounts in the caller's own directory.
 
-`~/.mounts/<name>` is created as a shortcut (symlink) to the real mountpoint.
+`~/mnt/<name>` is created as a shortcut (symlink) to the real mountpoint.
+Mounts created before 1.3 keep their existing `~/.mounts/<name>` paths.
 
 > **Upgrading from 1.1:** the old rule granted `mount`/`umount` with wildcard
 > arguments, which is equivalent to full root (for example `mount --bind` over
@@ -187,7 +188,7 @@ Config lives in `~/.config/mountbridge/mounts.json`. Passwords are **not** store
   "mount_type": "nfs",
   "host": "192.168.1.10",
   "remote_path": "/export/media",
-  "local_path": "/home/ben/.mounts/home-nas",
+  "local_path": "/home/ben/mnt/home-nas",
   "options": "rw,hard",
   "auto_mount": true,
   "created_at": "2024-11-01T09:00:00"

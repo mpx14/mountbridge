@@ -63,9 +63,9 @@ ok "MountBridge installed ($(command -v mountbridge))"
 
 # 3. Directories
 header "3. Directories"
-mkdir -p "$HOME/.mounts" "$HOME/.config/mountbridge"
+mkdir -p "$HOME/mnt" "$HOME/.config/mountbridge"
 chmod 700 "$HOME/.config/mountbridge"
-ok "$HOME/.mounts and $HOME/.config/mountbridge ready"
+ok "$HOME/mnt and $HOME/.config/mountbridge ready"
 
 # 4. Desktop integration
 header "4. Desktop integration"
@@ -149,6 +149,6 @@ header "════════════════════════
 echo -e "${GREEN}${BOLD}  $APP installed!${NC}"
 echo -e "  Run:        ${CYAN}mountbridge${NC}"
 echo -e "  Config:     ${CYAN}~/.config/mountbridge/mounts.json${NC}"
-echo -e "  NFS/SMB:    ${CYAN}/mnt/mountbridge/$USER/<name>${NC} (linked from ~/.mounts/)"
-echo -e "  SSHFS:      ${CYAN}~/.mounts/<name>${NC}"
+echo -e "  NFS/SMB:    ${CYAN}/mnt/mountbridge/$USER/<name>${NC} (linked from ~/mnt/)"
+echo -e "  SSHFS:      ${CYAN}~/mnt/<name>${NC}"
 header "══════════════════════════════════════════════════════"
