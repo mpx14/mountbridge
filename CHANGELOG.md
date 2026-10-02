@@ -7,6 +7,17 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- **Show in file manager sidebar.** A bookmark toggle on each mount adds or
+  removes a GTK bookmark (`~/.config/gtk-3.0/bookmarks`) for its `~/mnt/<name>`
+  path, so it appears in Thunar's side pane and in GTK file dialogs. NFS/SMB
+  mountpoints under `/mnt/mountbridge/` are otherwise not listed there.
+  Bookmarks follow renames and are removed when the mount is deleted; other
+  entries in the file are preserved as-is.
+
+### Docs
+- README: "Why not just use Thunar / GVfs?" section.
+
 ---
 
 ## [1.3.0] — 2026-10-01

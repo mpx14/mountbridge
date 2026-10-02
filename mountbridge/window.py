@@ -24,6 +24,7 @@ for _ns in ("AyatanaAppIndicator3", "AppIndicator3"):
     except (ValueError, ImportError):
         continue
 
+from . import bookmarks
 from . import ops as ops_mod
 from .constants import APP_ID, APP_NAME, APP_VERSION, CSS
 from .discovery import Discovery
@@ -277,7 +278,8 @@ class MainWindow(Gtk.ApplicationWindow):
         entries = read_mounts()
         mounted = mounted_paths(entries)
         for m in self.cfg.mounts:
-            card = MountCard(m, self._toggle, self._open, self._do_edit, self._do_delete)
+            card = MountCard(m, self._toggle, self._open, self._do_edit, self._do_delete,
+                             self._bookmark, self._is_bookmarked(m))
             card.update(self.ops.is_mounted(m, mounted), m.id in self._busy)
             self._cards[m.id] = card
             self.lb.add(card)
@@ -461,6 +463,33 @@ class MainWindow(Gtk.ApplicationWindow):
             return False
 
         threading.Thread(target=work, daemon=True).start()
+
+    def _is_bookmarked(self, m: MountConfig) -> bool:
+        try:
+            return bookmarks.has(m.local_path)
+        except OSError:
+            return False
+
+    def _bookmark(self, m: MountConfig, on: bool):
+        """Add/remove a GTK bookmark so the mount shows in Thunar's side pane.
+        Bookmarks the ~/mnt/<name> path the user sees, not /mnt/mountbridge/..."""
+        try:
+            if on:
+                bookmarks.add(m.local_path, m.name)
+            else:
+                bookmarks.remove(m.local_path)
+        except OSError as e:
+            self._error_dialog("Couldn't update file manager bookmarks",
+                               f"{bookmarks.bookmarks_file()}: {e.strerror or e}")
+        card = self._cards.get(m.id)
+        if card:
+            card.set_bookmarked(self._is_bookmarked(m))
+
+    def _drop_bookmark(self, path: str):
+        try:
+            bookmarks.remove(path)
+        except OSError:
+            pass  # best effort; never block an edit or delete on this
 
     def _open(self, m: MountConfig):
         link, real = os.path.expanduser(m.local_path), self.ops.mountpoint(m)
@@ -673,11 +702,19 @@ class MainWindow(Gtk.ApplicationWindow):
         v = self._run_dialog(MountDialog(self, mount=mount))
         if not v:
             return
+        old_path, old_name = mount.local_path, mount.name
+        had_bookmark = self._is_bookmarked(mount)
         for k in ("name", "mount_type", "host", "remote_path", "username", "domain",
                   "port", "ssh_key", "options", "auto_mount"):
             setattr(mount, k, v[k])
         mount.local_path = v["local_path"] or mount.local_path
         self.cfg.update(mount)
+        if had_bookmark and (mount.local_path, mount.name) != (old_path, old_name):
+            self._drop_bookmark(old_path)
+            try:
+                bookmarks.add(mount.local_path, mount.name)
+            except OSError:
+                pass
         self._populate()
         if v["clear_password"]:
             self.creds.delete(mount.id)
@@ -699,6 +736,7 @@ class MainWindow(Gtk.ApplicationWindow):
                 return
             self.creds.delete(mount.id)
             self.cfg.delete(mount.id)
+            self._drop_bookmark(mount.local_path)
             self._populate()
 
         if self.ops.is_mounted(mount):
