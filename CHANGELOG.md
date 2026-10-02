@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+---
+
+## [1.4.0] — 2026-10-02
+
 ### Added
 - **Show in file manager sidebar.** A bookmark toggle on each mount adds or
   removes a GTK bookmark (`~/.config/gtk-3.0/bookmarks`) for its `~/mnt/<name>`
@@ -14,8 +18,6 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   mountpoints under `/mnt/mountbridge/` are otherwise not listed there.
   Bookmarks follow renames and are removed when the mount is deleted; other
   entries in the file are preserved as-is.
-
-### Docs
 - README: "Why not just use Thunar / GVfs?" section.
 
 ---
@@ -171,7 +173,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Ctrl+N keyboard shortcut to add a mount
 - `install.sh` with interactive sudoers and FUSE configuration
 
-[Unreleased]: https://github.com/mpx14/mountbridge/compare/v1.3.0...HEAD
+[Unreleased]: https://github.com/mpx14/mountbridge/compare/v1.4.0...HEAD
+[1.4.0]: https://github.com/mpx14/mountbridge/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/mpx14/mountbridge/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/mpx14/mountbridge/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/mpx14/mountbridge/releases/tag/v1.1.0

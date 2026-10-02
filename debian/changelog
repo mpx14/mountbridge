@@ -1,3 +1,10 @@
+mountbridge (1.4.0) unstable; urgency=medium
+
+  * New upstream release. Changes are in CHANGELOG.md; notably, mounts can
+    be shown in the file manager sidebar via GTK bookmarks.
+
+ -- Ben <ben@mutefx.net>  Fri, 02 Oct 2026 12:00:00 +0000
+
 mountbridge (1.3.0) unstable; urgency=medium
 
   * New upstream release. Changes are in CHANGELOG.md; notably, SMB share
