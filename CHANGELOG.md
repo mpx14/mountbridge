@@ -7,6 +7,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+---
+
+## [1.5.0] — 2026-10-17
+
 ### Added
 - **Dead-mount detection.** Mounted shares are probed (`stat` in a child
   process with a 3 s timeout, plus a TCP check of the server) after network
@@ -206,7 +210,8 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 - Ctrl+N keyboard shortcut to add a mount
 - `install.sh` with interactive sudoers and FUSE configuration
 
-[Unreleased]: https://github.com/mpx14/mountbridge/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/mpx14/mountbridge/compare/v1.5.0...HEAD
+[1.5.0]: https://github.com/mpx14/mountbridge/compare/v1.4.0...v1.5.0
 [1.4.0]: https://github.com/mpx14/mountbridge/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/mpx14/mountbridge/compare/v1.2.0...v1.3.0
 [1.2.0]: https://github.com/mpx14/mountbridge/compare/v1.1.0...v1.2.0
