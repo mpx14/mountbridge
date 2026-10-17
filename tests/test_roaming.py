@@ -215,3 +215,39 @@ def test_ensure_link_recreates_missing_shortcut(sysbase, tmp_path):
     assert os.readlink(tmp_path / "mnt" / "media") == str(sysbase / "media")
     o.ensure_link(cfg(mount_type="sshfs", local_path=str(tmp_path / "s")))
     assert not os.path.lexists(tmp_path / "s")
+
+
+# ── Laptop detection (default for the Roaming switch) ────────────────────────
+
+def _sys(tmp_path, chassis=None, supplies=()):
+    if chassis is not None:
+        d = tmp_path / "class/dmi/id"
+        d.mkdir(parents=True)
+        (d / "chassis_type").write_text(f"{chassis}\n")
+    for name, typ, scope in supplies:
+        d = tmp_path / "class/power_supply" / name
+        d.mkdir(parents=True)
+        (d / "type").write_text(typ + "\n")
+        if scope:
+            (d / "scope").write_text(scope + "\n")
+    return str(tmp_path)
+
+
+@pytest.mark.parametrize("chassis,supplies,laptop", [
+    (10, (), True),                                      # Notebook (e.g. Framework 13)
+    (9, (), True),                                       # Laptop
+    (31, (), True),                                      # Convertible
+    (3, (("BAT0", "Battery", ""),), False),              # Desktop with a UPS battery
+    (2, (("BAT0", "Battery", ""),), True),               # Unknown chassis: battery decides
+    (None, (("BAT0", "Battery", "System"),), True),      # no DMI (e.g. ARM)
+    (None, (("hidpp_battery_0", "Battery", "Device"),    # wireless mouse only
+            ("AC", "Mains", "")), False),
+    (None, (), False),
+])
+def test_is_laptop(tmp_path, chassis, supplies, laptop):
+    assert ops.is_laptop(_sys(tmp_path, chassis, supplies)) is laptop
+
+
+def test_is_laptop_ignores_garbage_chassis(tmp_path):
+    root = _sys(tmp_path, "n/a", (("BAT1", "Battery", ""),))
+    assert ops.is_laptop(root) is True

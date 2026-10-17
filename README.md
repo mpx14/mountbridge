@@ -21,7 +21,7 @@
 | **Network discovery** | SMB broadcast via Avahi mDNS · SMB share listing via `smbclient` · NFS export listing via `showmount` |
 | **Auto-mount** | Per-mount toggle; runs when MountBridge starts, waiting for the network if needed |
 | **Dead-mount recovery** | After a network change, resume from suspend, or every 60 s, mounted shares are probed from a separate process (a hung server can't freeze MountBridge). A share whose server has gone shows a red dot with **Reconnect** and **Detach**; *Roaming* and auto-mount shares are detached and remounted automatically once the server is reachable again |
-| **Roaming mode** | Per-mount toggle for laptops: NFS uses `softerr,timeo=50,retrans=2` so programs get an error instead of hanging, SMB checks the server every 10 s |
+| **Roaming mode** | Per-mount toggle for laptops (on by default for new mounts when MountBridge runs on one): NFS uses `softerr,timeo=50,retrans=2` so programs get an error instead of hanging, SMB checks the server every 10 s |
 | **XFCE native** | Uses xfwm4 server-side decorations (no GTK CSD) — title bar, min/max/close behave normally |
 | **System tray** | Ayatana AppIndicator3 with Open/Quit menu; falls back to `Gtk.StatusIcon`. Closing the window keeps MountBridge running in the tray |
 | **File manager integration** | **Open Folder** opens a mount in Thunar (or your default file manager); the bookmark toggle adds it to the file manager's side pane |

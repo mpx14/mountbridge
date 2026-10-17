@@ -18,7 +18,10 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
   again, including after hopping Wi-Fi networks. Password-auth SSHFS mounts
   (which `reconnect` can't revive) now come back this way too.
 - **Roaming mode** per mount: NFS `softerr,timeo=50,retrans=2`, SMB
-  `echo_interval=10`.
+  `echo_interval=10`. On by default for new mounts on laptops (DMI chassis
+  type, or a system battery when that's unknown); off on desktops, where a
+  `hard` NFS mount rides out a brief outage without risking data. Existing
+  mounts are not changed.
 - Helper: `umount NAME --force` (`umount -f -l`) and `tidy`. Unmounting a
   share whose server has gone now offers a forced detach instead of hanging
   until the timeout. Older helpers are handled (falls back to `--lazy`).

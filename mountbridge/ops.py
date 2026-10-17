@@ -5,6 +5,7 @@ SSHFS runs entirely as the user. Nothing here stats a mountpoint to decide
 whether it is mounted: status comes from /proc/self/mountinfo only, so a hung
 server can't block the caller.
 """
+import functools
 import grp
 import os
 import pwd
@@ -120,6 +121,45 @@ def host_reachable(host: str, port: int, timeout: float = 2.0,
         return unresolvable
     except OSError:
         return False
+
+
+# SMBIOS chassis types (DMTF DSP0134 7.4.1): Portable, Laptop, Notebook, Hand Held,
+# Sub Notebook, Tablet, Convertible, Detachable.
+_PORTABLE_CHASSIS = {8, 9, 10, 11, 14, 30, 31, 32}
+_UNKNOWN_CHASSIS = {1, 2}  # Other, Unknown
+
+
+def is_laptop(sys_root: str = "/sys") -> bool:
+    """Best guess whether this machine moves between networks (decides the default
+    for new mounts' Roaming switch). The DMI chassis type decides when it is
+    specific; otherwise a system battery (not a mouse's: scope=Device) does."""
+    try:
+        with open(os.path.join(sys_root, "class/dmi/id/chassis_type")) as f:
+            chassis = int(f.read().strip())
+        if chassis not in _UNKNOWN_CHASSIS:
+            return chassis in _PORTABLE_CHASSIS
+    except (OSError, ValueError):
+        pass
+    ps = os.path.join(sys_root, "class/power_supply")
+    try:
+        supplies = os.listdir(ps)
+    except OSError:
+        return False
+    for name in supplies:
+        def attr(a, name=name):
+            try:
+                with open(os.path.join(ps, name, a)) as f:
+                    return f.read().strip()
+            except OSError:
+                return ""
+        if attr("type") == "Battery" and attr("scope") != "Device":
+            return True
+    return False
+
+
+@functools.lru_cache(maxsize=1)
+def default_roaming() -> bool:
+    return is_laptop()
 
 
 def service_port(m: MountConfig) -> int:

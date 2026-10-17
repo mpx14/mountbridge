@@ -15,6 +15,7 @@ from gi.repository import Gtk, Pango
 from .constants import MOUNTS_DIR, SYS_MOUNT_BASE
 from .discovery import Discovery
 from .models import LiveMount, MountConfig, MountType
+from .ops import default_roaming
 from .parsing import slugify, valid_host
 
 TYPES = ["nfs", "smb", "sshfs"]
@@ -166,11 +167,15 @@ class MountDialog(Gtk.Dialog):
             "MountBridge detaches the mount and remounts it when the server is back.\n\n"
             "NFS uses softerr,timeo=50,retrans=2: programs get an error after ~10 s "
             "instead of hanging, but one that ignores write errors can lose data. "
-            "SMB checks the server every 10 s.")
+            "SMB checks the server every 10 s.\n\n"
+            "On by default for new mounts on laptops, off on desktops.")
         rrow.pack_start(rl, True, True, 0)
         self.roam_sw = Gtk.Switch()
         self.roam_sw.set_valign(Gtk.Align.CENTER)
-        self.roam_sw.set_active(bool(getattr(m, "roaming", False)) if m else False)
+        # Editing keeps the saved choice; new, discovered and imported mounts get
+        # the machine's default (on for laptops).
+        self.roam_sw.set_active(bool(getattr(m, "roaming", False)) if self.edit
+                                else default_roaming())
         rrow.pack_start(self.roam_sw, False, False, 0)
 
         self.show_all()
