@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MountBridge — network mount manager for XFCE / Debian</title>
+<meta name="description" content="MountBridge: a GTK3 network mount manager for XFCE / Debian — NFS, SMB/CIFS and SSHFS with system keyring credential storage and live mount detection.">
+<meta property="og:title" content="MountBridge">
+<meta property="og:description" content="NFS, SMB/CIFS and SSHFS from one native GTK3 window on XFCE / Debian.">
+<meta property="og:url" content="https://github.com/mpx14/mountbridge">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 72'%3E%3Cg fill='none' stroke-linecap='round'%3E%3Cpath d='M4 68 A60 60 0 0 1 124 68' stroke='%23e3e7ec' stroke-width='8'/%3E%3Cpath d='M4 68 A30 30 0 0 1 64 68 M64 68 A30 30 0 0 1 124 68' stroke='%239aa1ab' stroke-width='7'/%3E%3Cpath d='M4 68 A15 15 0 0 1 34 68 M34 68 A15 15 0 0 1 64 68 M64 68 A15 15 0 0 1 94 68 M94 68 A15 15 0 0 1 124 68' stroke='%23ff8a1f' stroke-width='6'/%3E%3C/g%3E%3C/svg%3E">
+<link rel="stylesheet" href="/assets/fonts/fonts.css">
+<style>
+body{margin:0;background:#0a0b0d}
+a{color:#d8dce2}a:hover{color:#ffffff}
+.mb-arc{stroke-dasharray:1 1;stroke-dashoffset:1;stroke-linecap:butt;animation:mbDraw 1.68s ease-in-out 1 both}
+.mb-arc.t2{animation-delay:1.12s}.mb-arc.t3{animation-delay:2.24s}.mb-arc.t4{animation-delay:3.36s}
+@keyframes mbDraw{from{stroke-dashoffset:1}to{stroke-dashoffset:0}}
+.mb-bracket{position:relative}
+.mb-bracket::before,.mb-bracket::after{content:"";position:absolute;width:14px;height:14px;border-color:#8d939c;border-style:solid;pointer-events:none}
+.mb-bracket::before{top:-1px;left:-1px;border-width:1px 0 0 1px}
+.mb-bracket::after{bottom:-1px;right:-1px;border-width:0 1px 1px 0}
+@media (prefers-reduced-motion: reduce){.mb-arc{animation:none;stroke-dashoffset:0}}
+</style>
+</head>
+<body>
+<div style="min-height: 100vh; background-color: #0a0b0d; background-image: linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.035) 1px, transparent 1px); background-size: 48px 48px; color: #d8dce2; font-family: 'IBM Plex Sans', 'Helvetica Neue', sans-serif; font-size: 16px; line-height: 1.6">
+
+<header style="border-bottom: 1px solid #2a2e35; background: rgba(10,11,13,0.92)">
+<div style="max-width: 1180px; margin: 0 auto; padding: 0 24px; height: 68px; display: flex; align-items: center; justify-content: space-between; gap: 24px">
+<a href="#top" style="display: flex; align-items: center; gap: 12px; text-decoration: none" aria-label="MountBridge home">
+<svg viewBox="0 0 128 72" width="44" height="25" aria-hidden="true">
+<defs><linearGradient id="mbChromeS" gradientUnits="userSpaceOnUse" x1="0" y1="8" x2="0" y2="68"><stop offset="0" stop-color="#ffffff"></stop><stop offset="0.48" stop-color="#9aa1ab"></stop><stop offset="0.52" stop-color="#5d636c"></stop><stop offset="1" stop-color="#e3e7ec"></stop></linearGradient></defs>
+<g fill="none" stroke="url(#mbChromeS)" stroke-linecap="round">
+<path d="M4 68 A60 60 0 0 1 124 68" stroke-width="4"></path>
+<path d="M4 68 A30 30 0 0 1 64 68 M64 68 A30 30 0 0 1 124 68" stroke-width="3.2"></path>
+<path d="M4 68 A15 15 0 0 1 34 68 M34 68 A15 15 0 0 1 64 68 M64 68 A15 15 0 0 1 94 68 M94 68 A15 15 0 0 1 124 68" stroke-width="2.6"></path>
+</g>
+</svg>
+<span style="font-family: Michroma, 'Eurostile', sans-serif; font-size: 15px; letter-spacing: 0.22em; color: #e6e9ee">MOUNTBRIDGE</span>
+</a>
+<nav aria-label="Primary" style="display: flex; align-items: center; gap: 28px; flex-wrap: wrap; font-family: 'Share Tech Mono', monospace; font-size: 14px; letter-spacing: 0.12em; text-transform: uppercase">
+<a href="#protocols" style="text-decoration: none">Protocols</a>
+<a href="#features" style="text-decoration: none">Features</a>
+<a href="#install" style="text-decoration: none">Install</a>
+<a href="https://github.com/mpx14/mountbridge/blob/main/CHANGELOG.md" style="text-decoration: none">Changelog</a>
+<a href="https://github.com/mpx14/mountbridge" style="text-decoration: none; padding: 8px 14px; border: 1px solid #4a4f57">GitHub ↗</a>
+</nav>
+</div>
+</header>
+
+<main id="top">
+<section style="max-width: 1180px; margin: 0 auto; padding: 88px 24px 72px; display: flex; flex-wrap: wrap; align-items: center; gap: 64px">
+<div style="flex: 1 1 420px; display: flex; flex-direction: column; gap: 28px">
+<div style="font-family: 'Share Tech Mono', monospace; font-size: 13px; letter-spacing: 0.2em; color: #ff8a1f">[ SYS.MNT ] // NFS · SMB/CIFS · SSHFS — v1.5.0</div>
+<h1 style="margin: 0; font-family: Michroma, 'Eurostile', sans-serif; font-weight: 400; font-size: clamp(1.9rem, 4vw, 2.9rem); line-height: 1.2; letter-spacing: 0.04em; overflow-wrap: anywhere; color: #f2f4f7">MountBridge</h1>
+<p style="margin: 0; max-width: 34rem; font-size: 21px; line-height: 1.45; color: #e3e6ea">A network mount manager for XFCE / Debian — NFS, SMB/CIFS and SSHFS from one native GTK3 window.</p>
+<p style="margin: 0; max-width: 34rem; font-size: 17px; color: #aab0b9">Passwords stay in the system keyring, live mounts are picked up from the kernel mount table, and NFS/SMB go through a small validating root helper — SSHFS never touches root.</p>
+<div style="display: flex; flex-wrap: wrap; gap: 16px; padding-top: 8px">
+<a href="https://github.com/mpx14/mountbridge/releases/latest" style="display: inline-flex; align-items: center; gap: 10px; min-height: 48px; padding: 0 24px; background: #e6e9ee; color: #0a0b0d; text-decoration: none; font-family: 'Share Tech Mono', monospace; font-size: 15px; letter-spacing: 0.12em; text-transform: uppercase; border: 1px solid #e6e9ee">
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"></path><path d="M7 10l5 5 5-5"></path><path d="M4 20h16"></path></svg>
+Download v1.5.0 .deb</a>
+<a href="https://github.com/mpx14/mountbridge" style="display: inline-flex; align-items: center; gap: 10px; min-height: 48px; padding: 0 24px; border: 1px solid #4a4f57; text-decoration: none; font-family: 'Share Tech Mono', monospace; font-size: 15px; letter-spacing: 0.12em; text-transform: uppercase">
+<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 19c-4 1.5-4-2-6-2.5"></path><path d="M15 21v-3.5c0-1 .1-1.4-.5-2 2.8-.3 5.5-1.4 5.5-6a4.6 4.6 0 0 0-1.3-3.2 4.2 4.2 0 0 0-.1-3.2s-1-.3-3.4 1.3a11.6 11.6 0 0 0-6.2 0C6.6 2.8 5.6 3.1 5.6 3.1a4.2 4.2 0 0 0-.1 3.2A4.6 4.6 0 0 0 4.2 9.5c0 4.6 2.7 5.7 5.5 6-.6.6-.6 1.2-.5 2V21"></path></svg>
+mpx14/mountbridge on GitHub</a>
+</div>
+<div style="font-family: 'Share Tech Mono', monospace; font-size: 13px; color: #8d939c; letter-spacing: 0.08em">Debian 12 / 13 / testing · Ubuntu 22.04 / 24.04 · GPLv3 · Python 3.10+</div>
+</div>
+
+<figure class="mb-bracket" style="flex: 1 1 380px; max-width: 500px; margin: 0; padding: 40px 32px 32px; border: 1px solid #2a2e35; background: #0e1013; display: flex; flex-direction: column; gap: 20px">
+<div style="display: flex; justify-content: space-between; font-family: 'Share Tech Mono', monospace; font-size: 12px; letter-spacing: 0.16em; color: #8d939c">
+<span>FIG.01 — RECURSIVE ARCH</span>
+<span style="color: #ff8a1f">N=4</span>
+</div>
+<div style="position: relative; padding: 16px 0">
+<div style="position: absolute; left: 0; right: 0; top: 50%; border-top: 1px dashed #2a2e35"></div>
+<div style="position: absolute; top: 0; bottom: 0; left: 50%; border-left: 1px dashed #2a2e35"></div>
+<svg viewBox="0 0 128 72" width="100%" style="position: relative; display: block" role="img" aria-label="MountBridge logo: a bridge arch made of four tiers of self-similar arches">
+<defs><linearGradient id="mbChromeL" gradientUnits="userSpaceOnUse" x1="0" y1="8" x2="0" y2="68"><stop offset="0" stop-color="#ffffff"></stop><stop offset="0.48" stop-color="#9aa1ab"></stop><stop offset="0.52" stop-color="#5d636c"></stop><stop offset="1" stop-color="#e3e7ec"></stop></linearGradient></defs>
+<g fill="none">
+<path class="mb-arc t1" pathLength="1" d="M4 68 A60 60 0 0 1 124 68" stroke="url(#mbChromeL)" stroke-width="1.6"></path>
+<path class="mb-arc t2" pathLength="1" d="M4 68 A30 30 0 0 1 64 68" stroke="url(#mbChromeL)" stroke-width="1.2"></path>
+<path class="mb-arc t2" pathLength="1" d="M64 68 A30 30 0 0 1 124 68" stroke="url(#mbChromeL)" stroke-width="1.2"></path>
+<path class="mb-arc t3" pathLength="1" d="M4 68 A15 15 0 0 1 34 68" stroke="url(#mbChromeL)" stroke-width="0.9"></path>
+<path class="mb-arc t3" pathLength="1" d="M34 68 A15 15 0 0 1 64 68" stroke="url(#mbChromeL)" stroke-width="0.9"></path>
+<path class="mb-arc t3" pathLength="1" d="M64 68 A15 15 0 0 1 94 68" stroke="url(#mbChromeL)" stroke-width="0.9"></path>
+<path class="mb-arc t3" pathLength="1" d="M94 68 A15 15 0 0 1 124 68" stroke="url(#mbChromeL)" stroke-width="0.9"></path>
+<path class="mb-arc t4" pathLength="1" d="M4 68 A7.5 7.5 0 0 1 19 68" stroke="#ff8a1f" stroke-width="0.7"></path>
+<path class="mb-arc t4" pathLength="1" d="M19 68 A7.5 7.5 0 0 1 34 68" stroke="#ff8a1f" stroke-width="0.7"></path>
+<path class="mb-arc t4" pathLength="1" d="M34 68 A7.5 7.5 0 0 1 49 68" stroke="#ff8a1f" stroke-width="0.7"></path>
+<path class="mb-arc t4" pathLength="1" d="M49 68 A7.5 7.5 0 0 1 64 68" stroke="#ff8a1f" stroke-width="0.7"></path>
+<path class="mb-arc t4" pathLength="1" d="M64 68 A7.5 7.5 0 0 1 79 68" stroke="#ff8a1f" stroke-width="0.7"></path>
+<path class="mb-arc t4" pathLength="1" d="M79 68 A7.5 7.5 0 0 1 94 68" stroke="#ff8a1f" stroke-width="0.7"></path>
+<path class="mb-arc t4" pathLength="1" d="M94 68 A7.5 7.5 0 0 1 109 68" stroke="#ff8a1f" stroke-width="0.7"></path>
+<path class="mb-arc t4" pathLength="1" d="M109 68 A7.5 7.5 0 0 1 124 68" stroke="#ff8a1f" stroke-width="0.7"></path>
+<path d="M0 68 H128" stroke="#4a4f57" stroke-width="0.4"></path>
+</g>
+</svg>
+</div>
+<figcaption style="display: flex; justify-content: space-between; font-family: 'Share Tech Mono', monospace; font-size: 12px; letter-spacing: 0.14em; color: #8d939c">
+<span>r = 60 · 30 · 15 · 7.5</span>
+<span>SPAN 120 / BASE 0</span>
+</figcaption>
+</figure>
+</section>
+
+<section id="protocols" style="border-top: 1px solid #2a2e35; border-bottom: 1px solid #2a2e35; background: rgba(14,16,19,0.85)">
+<div style="max-width: 1180px; margin: 0 auto; padding: 72px 24px; display: flex; flex-direction: column; gap: 40px">
+<div style="display: flex; align-items: baseline; gap: 20px; flex-wrap: wrap">
+<span style="font-family: 'Share Tech Mono', monospace; font-size: 13px; letter-spacing: 0.2em; color: #ff8a1f">02 /</span>
+<h2 style="margin: 0; font-family: Michroma, 'Eurostile', sans-serif; font-weight: 400; font-size: 24px; letter-spacing: 0.08em; color: #f2f4f7">THREE PROTOCOLS. ONE PANEL.</h2>
+</div>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 24px">
+<article class="mb-bracket" style="padding: 28px; border: 1px solid #2a2e35; background: #0a0b0d; display: flex; flex-direction: column; gap: 14px">
+<div style="font-family: 'Share Tech Mono', monospace; font-size: 12px; letter-spacing: 0.18em; color: #8d939c">PROTO.A</div>
+<h3 style="margin: 0; font-family: Michroma, 'Eurostile', sans-serif; font-weight: 400; font-size: 20px; letter-spacing: 0.1em; color: #f2f4f7">NFS</h3>
+<p style="margin: 0; color: #aab0b9">Mounted by a small validating root helper that only members of the <code style="font-family: 'Share Tech Mono', monospace; color: #d8dce2">mountbridge</code> group may run. Options are allow-listed, <code style="font-family: 'Share Tech Mono', monospace; color: #d8dce2">nosuid,nodev</code> is always added, and the default is <code style="font-family: 'Share Tech Mono', monospace; color: #d8dce2">rw,hard</code> — or, in Roaming mode, <code style="font-family: 'Share Tech Mono', monospace; color: #d8dce2">softerr,timeo=50,retrans=2</code>, so a vanished server returns an error instead of hanging. Exports are discovered with showmount.</p>
+</article>
+<article class="mb-bracket" style="padding: 28px; border: 1px solid #2a2e35; background: #0a0b0d; display: flex; flex-direction: column; gap: 14px">
+<div style="font-family: 'Share Tech Mono', monospace; font-size: 12px; letter-spacing: 0.18em; color: #8d939c">PROTO.B</div>
+<h3 style="margin: 0; font-family: Michroma, 'Eurostile', sans-serif; font-weight: 400; font-size: 20px; letter-spacing: 0.1em; color: #f2f4f7">SMB / CIFS</h3>
+<p style="margin: 0; color: #aab0b9">Same helper; credentials go in on stdin, never on the command line, and uid/gid are forced to the calling user. Credentialed share browsing means NAS boxes that refuse anonymous listing still show their shares.</p>
+</article>
+<article class="mb-bracket" style="padding: 28px; border: 1px solid #2a2e35; background: #0a0b0d; display: flex; flex-direction: column; gap: 14px">
+<div style="font-family: 'Share Tech Mono', monospace; font-size: 12px; letter-spacing: 0.18em; color: #8d939c">PROTO.C</div>
+<h3 style="margin: 0; font-family: Michroma, 'Eurostile', sans-serif; font-weight: 400; font-size: 20px; letter-spacing: 0.1em; color: #f2f4f7">SSHFS</h3>
+<p style="margin: 0; color: #aab0b9">Fully user-space — root is never involved and no group membership is needed. Passwords are passed with <code style="font-family: 'Share Tech Mono', monospace; color: #d8dce2">-o password_stdin</code>.</p>
+</article>
+</div>
+<p style="margin: 0; font-family: 'Share Tech Mono', monospace; font-size: 13px; letter-spacing: 0.06em; color: #8d939c">NFS/SMB mount at /mnt/mountbridge/&lt;user&gt;/&lt;name&gt; (root-owned), with ~/mnt/&lt;name&gt; as a shortcut.</p>
+</div>
+</section>
+
+<section id="features" style="max-width: 1180px; margin: 0 auto; padding: 72px 24px; display: flex; flex-direction: column; gap: 40px">
+<div style="display: flex; align-items: baseline; gap: 20px; flex-wrap: wrap">
+<span style="font-family: 'Share Tech Mono', monospace; font-size: 13px; letter-spacing: 0.2em; color: #ff8a1f">03 /</span>
+<h2 style="margin: 0; font-family: Michroma, 'Eurostile', sans-serif; font-weight: 400; font-size: 24px; letter-spacing: 0.08em; color: #f2f4f7">BUILT FOR THE DESKTOP</h2>
+</div>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1px; background: #2a2e35; border: 1px solid #2a2e35">
+<div style="padding: 28px; background: #0a0b0d; display: flex; flex-direction: column; gap: 12px">
+<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#d8dce2" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="8" cy="15" r="4"></circle><path d="M11 12l9-9"></path><path d="M17 6l3 3"></path><path d="M15 8l2 2"></path></svg>
+<h3 style="margin: 0; font-size: 17px; font-weight: 500; color: #f2f4f7">System keyring</h3>
+<p style="margin: 0; font-size: 15px; color: #aab0b9">Passwords are stored via SecretService (gnome-keyring, KWallet) — never in mounts.json, never in plaintext on disk.</p>
+</div>
+<div style="padding: 28px; background: #0a0b0d; display: flex; flex-direction: column; gap: 12px">
+<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#d8dce2" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12h4l3-7 4 14 3-7h4"></path></svg>
+<h3 style="margin: 0; font-size: 17px; font-weight: 500; color: #f2f4f7">Live mount detection</h3>
+<p style="margin: 0; font-size: 15px; color: #aab0b9">Watches /proc/self/mountinfo and updates instantly. Mounts made outside the app appear with an Import button; a hung server can't freeze the UI.</p>
+</div>
+<div style="padding: 28px; background: #0a0b0d; display: flex; flex-direction: column; gap: 12px">
+<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#d8dce2" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="6"></circle><path d="M20 20l-4.5-4.5"></path></svg>
+<h3 style="margin: 0; font-size: 17px; font-weight: 500; color: #f2f4f7">Network discovery</h3>
+<p style="margin: 0; font-size: 15px; color: #aab0b9">SMB hosts via Avahi mDNS, shares via smbclient, NFS exports via showmount — with Add Mount pre-filled from what it finds.</p>
+</div>
+<div style="padding: 28px; background: #0a0b0d; display: flex; flex-direction: column; gap: 12px">
+<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#d8dce2" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 0 1 14-5.3"></path><path d="M18 3v4h-4"></path><path d="M20 12a8 8 0 0 1-14 5.3"></path><path d="M6 21v-4h4"></path></svg>
+<h3 style="margin: 0; font-size: 17px; font-weight: 500; color: #f2f4f7">Auto-mount</h3>
+<p style="margin: 0; font-size: 15px; color: #aab0b9">Per-mount toggle. Runs when MountBridge starts, waits for the network, reports failures — and remounts after a Wi-Fi change or resume.</p>
+</div>
+<div style="padding: 28px; background: #0a0b0d; display: flex; flex-direction: column; gap: 12px">
+<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#d8dce2" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="1"></rect><path d="M8 20h8"></path><path d="M12 16v4"></path><circle cx="17" cy="8" r="1.2"></circle></svg>
+<h3 style="margin: 0; font-size: 17px; font-weight: 500; color: #f2f4f7">XFCE native</h3>
+<p style="margin: 0; font-size: 15px; color: #aab0b9">xfwm4 server-side decorations, an Ayatana AppIndicator3 tray icon, and libnotify notifications. Closing the window keeps it in the tray.</p>
+</div>
+<div style="padding: 28px; background: #0a0b0d; display: flex; flex-direction: column; gap: 12px">
+<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#d8dce2" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"></path><path d="M9 12l2 2 4-4"></path></svg>
+<h3 style="margin: 0; font-size: 17px; font-weight: 500; color: #f2f4f7">Least privilege</h3>
+<p style="margin: 0; font-size: 15px; color: #aab0b9">The sudoers rule allows exactly one command — the helper — and only for the mountbridge group. Unmounts are limited to the caller's own directory.</p>
+</div>
+<div style="padding: 28px; background: #0a0b0d; display: flex; flex-direction: column; gap: 12px">
+<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#d8dce2" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9"></path><path d="M21 3v6h-6"></path><path d="M12 8v5"></path><path d="M12 16.5v.01"></path></svg>
+<h3 style="margin: 0; font-size: 17px; font-weight: 500; color: #f2f4f7">Dead-mount recovery</h3>
+<p style="margin: 0; font-size: 15px; color: #aab0b9">After a Wi-Fi change, a resume from suspend, or every 60 s, mounts are probed without risking a hang. A share whose server has gone turns red with Reconnect and Detach — no more frozen file managers.</p>
+</div>
+<div style="padding: 28px; background: #0a0b0d; display: flex; flex-direction: column; gap: 12px">
+<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#d8dce2" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 9a15 15 0 0 1 20 0"></path><path d="M5.5 12.5a10 10 0 0 1 13 0"></path><path d="M9 16a5 5 0 0 1 6 0"></path><path d="M12 19.5v.01"></path></svg>
+<h3 style="margin: 0; font-size: 17px; font-weight: 500; color: #f2f4f7">Roaming mode</h3>
+<p style="margin: 0; font-size: 15px; color: #aab0b9">For laptops: fail fast instead of hanging, then detach and remount automatically once the server is reachable again. On by default for new mounts when MountBridge runs on a laptop.</p>
+</div>
+<div style="padding: 28px; background: #0a0b0d; display: flex; flex-direction: column; gap: 12px">
+<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#d8dce2" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 3h12v18l-6-4-6 4z"></path></svg>
+<h3 style="margin: 0; font-size: 17px; font-weight: 500; color: #f2f4f7">File manager sidebar</h3>
+<p style="margin: 0; font-size: 15px; color: #aab0b9">A bookmark toggle puts any mount in Thunar's side pane and GTK file dialogs, pointing at its ~/mnt/&lt;name&gt; path.</p>
+</div>
+</div>
+</section>
+
+<section id="install" style="border-top: 1px solid #2a2e35; background: rgba(14,16,19,0.85)">
+<div style="max-width: 1180px; margin: 0 auto; padding: 72px 24px 88px; display: flex; flex-wrap: wrap; gap: 48px; align-items: flex-start">
+<div style="flex: 1 1 300px; display: flex; flex-direction: column; gap: 16px">
+<div style="display: flex; align-items: baseline; gap: 20px">
+<span style="font-family: 'Share Tech Mono', monospace; font-size: 13px; letter-spacing: 0.2em; color: #ff8a1f">04 /</span>
+<h2 style="margin: 0; font-family: Michroma, 'Eurostile', sans-serif; font-weight: 400; font-size: 24px; letter-spacing: 0.08em; color: #f2f4f7">INSTALL</h2>
+</div>
+<p style="margin: 0; color: #aab0b9">One <code style="font-family: 'Share Tech Mono', monospace; color: #d8dce2">_all.deb</code> for Debian 12, 13 and testing, Ubuntu 22.04 and 24.04, and derivatives such as Linux Mint and Pop!_OS. apt pulls in the dependencies.</p>
+<p style="margin: 0; color: #aab0b9">During install you're asked whether <em>you</em> should get NFS/SMB access — answer yes, then log out and back in once. SSHFS works for everyone without it.</p>
+<p style="margin: 0; color: #aab0b9">Answered no, or adding another user? Use <strong style="font-weight: 500; color: #d8dce2">Grant Access…</strong> in the app, <code style="font-family: 'Share Tech Mono', monospace; color: #d8dce2">sudo dpkg-reconfigure mountbridge</code>, or <code style="font-family: 'Share Tech Mono', monospace; color: #d8dce2">sudo adduser &lt;user&gt; mountbridge</code>.</p>
+<p style="margin: 0; font-family: 'Share Tech Mono', monospace; font-size: 13px; letter-spacing: 0.08em; color: #8d939c">NEW IN 1.5.0 — dead-mount detection &amp; automatic reconnect after Wi-Fi changes and resume · Roaming mode (on by default on laptops)</p>
+<p style="margin: 0; font-size: 15px; color: #aab0b9"><a href="https://github.com/mpx14/mountbridge/releases">All releases</a> · <a href="https://github.com/mpx14/mountbridge/blob/main/CHANGELOG.md">Changelog</a> · <a href="https://github.com/mpx14/mountbridge#readme">Full README</a></p>
+</div>
+<pre class="mb-bracket" style="flex: 2 1 480px; margin: 0; padding: 28px; border: 1px solid #2a2e35; background: #050607; overflow-x: auto; font-family: 'Share Tech Mono', monospace; font-size: 14px; line-height: 1.9; color: #d8dce2"><span style="color: #8d939c"># Debian package (recommended)</span>
+<span style="color: #ff8a1f">$</span> wget https://github.com/mpx14/mountbridge/releases/download/v1.5.0/mountbridge_1.5.0_all.deb
+<span style="color: #ff8a1f">$</span> sudo apt install ./mountbridge_1.5.0_all.deb
+
+<span style="color: #8d939c"># build the .deb yourself</span>
+<span style="color: #ff8a1f">$</span> git clone https://github.com/mpx14/mountbridge.git
+<span style="color: #ff8a1f">$</span> cd mountbridge
+<span style="color: #ff8a1f">$</span> sudo apt-get build-dep ./
+<span style="color: #ff8a1f">$</span> make deb            <span style="color: #8d939c"># → dist/mountbridge_&lt;version&gt;_all.deb</span>
+
+<span style="color: #8d939c"># or from source, without a package</span>
+<span style="color: #ff8a1f">$</span> bash install.sh</pre>
+</div>
+</section>
+</main>
+
+<footer style="border-top: 1px solid #2a2e35">
+<div style="max-width: 1180px; margin: 0 auto; padding: 28px 24px; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 16px; font-family: 'Share Tech Mono', monospace; font-size: 13px; letter-spacing: 0.12em; color: #8d939c">
+<span>MOUNTBRIDGE 1.5.0 · <a href="https://github.com/mpx14/mountbridge/blob/main/LICENSE" style="text-decoration: none">GPL-3.0</a> · BUILT BY MPX14</span>
+<span style="display: flex; flex-wrap: wrap; gap: 20px">
+<a href="https://github.com/mpx14/mountbridge/blob/main/CONTRIBUTING.md" style="text-decoration: none">Contributing</a>
+<a href="https://github.com/mpx14/mountbridge/issues" style="text-decoration: none">Issues</a>
+<a href="https://github.com/mpx14/mountbridge" style="text-decoration: none">github.com/mpx14/mountbridge</a>
+</span>
+</div>
+</footer>
+
+</div>
+</body>
+</html>

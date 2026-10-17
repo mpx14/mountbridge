@@ -92,7 +92,12 @@ disagree:
 1. `pyproject.toml` → `version = "X.Y.Z"` (the app reads it at runtime)
 2. `debian/changelog` → add an entry with `dch -v X.Y.Z` (package: devscripts)
 
-Also add a `## [X.Y.Z]` section to `CHANGELOG.md`. Pushing a `vX.Y.Z` tag makes
+Also add a `## [X.Y.Z]` section to `CHANGELOG.md`, and update the project page
+`site/index.html` (version, download links, "New in" line); the same test fails
+if its version is stale. The page is deployed by hand after the release is
+published: `scp site/index.html <server>:/var/www/html/mountbridge/`.
+
+Pushing a `vX.Y.Z` tag makes
 CI build and install-test the `.deb` and attach it to a **draft** GitHub
 release, which you review and publish.
 

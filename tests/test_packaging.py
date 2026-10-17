@@ -27,6 +27,16 @@ def test_changelog_md_has_entry_for_version():
     assert f"## [{pyproject_version()}]" in (ROOT / "CHANGELOG.md").read_text()
 
 
+def test_project_page_matches_pyproject():
+    """site/index.html (mutefx.net/mountbridge/) must name the current release
+    everywhere: hero, download button and links, "New in" line, footer."""
+    page = (ROOT / "site" / "index.html").read_text(encoding="utf-8")
+    found = set(re.findall(r"(?:\bv|MOUNTBRIDGE |NEW IN |mountbridge_)(\d+\.\d+\.\d+)", page))
+    assert found == {pyproject_version()}, (
+        f"site/index.html mentions {sorted(found)}, pyproject.toml has {pyproject_version()}: "
+        "update the project page")
+
+
 def test_sudoers_template_is_group_based():
     rule = [ln for ln in (ROOT / "data" / "mountbridge.sudoers").read_text().splitlines()
             if ln and not ln.startswith("#")]
