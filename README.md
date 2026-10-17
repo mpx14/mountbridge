@@ -20,6 +20,8 @@
 | **Live mount detection** | Watches the kernel mount table (`/proc/self/mountinfo`) and updates instantly — unmanaged NFS/SMB/SSHFS mounts appear automatically with an **Import** button. Never stats a mountpoint, so a hung server can't freeze the UI |
 | **Network discovery** | SMB broadcast via Avahi mDNS · SMB share listing via `smbclient` · NFS export listing via `showmount` |
 | **Auto-mount** | Per-mount toggle; runs when MountBridge starts, waiting for the network if needed |
+| **Dead-mount recovery** | After a network change, resume from suspend, or every 60 s, mounted shares are probed from a separate process (a hung server can't freeze MountBridge). A share whose server has gone shows a red dot with **Reconnect** and **Detach**; *Roaming* and auto-mount shares are detached and remounted automatically once the server is reachable again |
+| **Roaming mode** | Per-mount toggle for laptops: NFS uses `softerr,timeo=50,retrans=2` so programs get an error instead of hanging, SMB checks the server every 10 s |
 | **XFCE native** | Uses xfwm4 server-side decorations (no GTK CSD) — title bar, min/max/close behave normally |
 | **System tray** | Ayatana AppIndicator3 with Open/Quit menu; falls back to `Gtk.StatusIcon`. Closing the window keeps MountBridge running in the tray |
 | **File manager integration** | **Open Folder** opens a mount in Thunar (or your default file manager); the bookmark toggle adds it to the file manager's side pane |
@@ -176,7 +178,10 @@ The helper is the security boundary. It:
 - accepts only allow-listed mount options, and always adds `nosuid,nodev`;
 - forces `uid`/`gid` on CIFS mounts to the calling user;
 - reads SMB credentials from stdin and never from the command line;
-- unmounts only nfs/cifs mounts in the caller's own directory.
+- unmounts only nfs/cifs mounts in the caller's own directory (`--force`,
+  i.e. `umount -f -l`, detaches one whose server has gone);
+- removes a mountpoint directory once it's unmounted, and `tidy` (run at
+  startup) removes empty, unused ones left by older versions.
 
 `~/mnt/<name>` is created as a shortcut (symlink) to the real mountpoint.
 Mounts created before 1.3 keep their existing `~/.mounts/<name>` paths.
@@ -215,9 +220,14 @@ Config lives in `~/.config/mountbridge/mounts.json`. Passwords are **not** store
   "local_path": "/home/ben/mnt/home-nas",
   "options": "rw,hard",
   "auto_mount": true,
+  "roaming": false,
   "created_at": "2024-11-01T09:00:00"
 }
 ```
+
+`roaming: true` adds `softerr,timeo=50,retrans=2` to NFS and `echo_interval=10`
+to SMB (overriding `hard`/`soft` in `options`). The trade-off: a program that
+ignores write errors can lose data if the server disappears mid-write.
 
 ---
 

@@ -154,6 +154,25 @@ class MountDialog(Gtk.Dialog):
         self.auto_sw.set_active(bool(getattr(m, "auto_mount", False)) if m else False)
         arow.pack_start(self.auto_sw, False, False, 0)
 
+        rrow = Gtk.Box(spacing=12)
+        rrow.set_margin_top(8)
+        c.pack_start(rrow, False, False, 0)
+        rl = Gtk.Label(label="Roaming: fail fast and reconnect after network changes",
+                       xalign=0)
+        rl.set_line_wrap(True)
+        rl.set_hexpand(True)
+        rl.set_tooltip_text(
+            "For laptops that move between networks. If the server disappears, "
+            "MountBridge detaches the mount and remounts it when the server is back.\n\n"
+            "NFS uses softerr,timeo=50,retrans=2: programs get an error after ~10 s "
+            "instead of hanging, but one that ignores write errors can lose data. "
+            "SMB checks the server every 10 s.")
+        rrow.pack_start(rl, True, True, 0)
+        self.roam_sw = Gtk.Switch()
+        self.roam_sw.set_valign(Gtk.Align.CENTER)
+        self.roam_sw.set_active(bool(getattr(m, "roaming", False)) if m else False)
+        rrow.pack_start(self.roam_sw, False, False, 0)
+
         self.show_all()
         self._type_changed(self.type_combo)
 
@@ -250,6 +269,7 @@ class MountDialog(Gtk.Dialog):
             "port":           int(ps) if t == "sshfs" and ps.isdigit() else None,
             "options":        self.opts_e.get_text().strip(),
             "auto_mount":     self.auto_sw.get_active(),
+            "roaming":        self.roam_sw.get_active(),
         }
 
 
@@ -258,10 +278,12 @@ class MountDialog(Gtk.Dialog):
 class MountCard(Gtk.ListBoxRow):
     def __init__(self, mount: MountConfig, on_toggle: Callable, on_open: Callable,
                  on_edit: Callable, on_delete: Callable,
-                 on_bookmark: Optional[Callable] = None, bookmarked: bool = False):
+                 on_bookmark: Optional[Callable] = None, bookmarked: bool = False,
+                 on_detach: Optional[Callable] = None):
         super().__init__()
         self.mount = mount
         self._on_bookmark = on_bookmark
+        self._on_detach = on_detach
         _css(self, "mb-card")
         self._build(on_toggle, on_open, on_edit, on_delete)
         self.set_bookmarked(bookmarked)
@@ -298,8 +320,10 @@ class MountCard(Gtk.ListBoxRow):
         path_lbl.set_margin_top(4)
         outer.pack_start(path_lbl, False, False, 0)
 
-        if m.auto_mount:
-            al = Gtk.Label(label="⟳ auto-mount", xalign=0)
+        flags = [f for f, on in (("⟳ auto-mount", m.auto_mount),
+                                 ("⇄ roaming", getattr(m, "roaming", False))) if on]
+        if flags:
+            al = Gtk.Label(label="   ".join(flags), xalign=0)
             al.set_opacity(0.45)
             al.set_margin_top(2)
             outer.pack_start(al, False, False, 0)
@@ -316,6 +340,15 @@ class MountCard(Gtk.ListBoxRow):
         self.open_btn.connect("clicked", lambda _: on_open(m))
         self.open_btn.set_sensitive(False)
         acts.pack_start(self.open_btn, False, False, 0)
+
+        # Shown only while the mount is dead: force-detach without remounting.
+        self.detach_btn = _css(Gtk.Button(label="Detach"), "mb-btn", "mb-btn-unmount")
+        self.detach_btn.set_tooltip_text("Force-detach without reconnecting. "
+                                         "Changes not yet written to the server are lost.")
+        self.detach_btn.set_no_show_all(True)
+        if self._on_detach:
+            self.detach_btn.connect("clicked", lambda _: self._on_detach(m))
+        acts.pack_start(self.detach_btn, False, False, 0)
 
         spacer = Gtk.Label()
         spacer.set_hexpand(True)
@@ -349,17 +382,30 @@ class MountCard(Gtk.ListBoxRow):
         self.bm_btn.set_tooltip_text("Remove from file manager sidebar" if on
                                      else "Show in file manager sidebar")
 
-    def update(self, mounted: bool, busy: bool):
+    def update(self, mounted: bool, busy: bool, dead: bool = False):
+        """dead: listed in the mount table, but the server isn't answering."""
+        dead = dead and mounted
         ctx = self.dot.get_style_context()
         for c in ("mb-dot-on", "mb-dot-off", "mb-dot-busy", "mb-dot-err"):
             ctx.remove_class(c)
-        ctx.add_class("mb-dot-busy" if busy else ("mb-dot-on" if mounted else "mb-dot-off"))
+        ctx.add_class("mb-dot-busy" if busy else "mb-dot-err" if dead
+                      else ("mb-dot-on" if mounted else "mb-dot-off"))
+        self.dot.set_tooltip_text("Mounted, but the server is not responding" if dead
+                                  else None)
 
-        self.open_btn.set_sensitive(mounted and not busy)
+        self.open_btn.set_sensitive(mounted and not busy and not dead)
         self.mount_btn.set_sensitive(not busy)
+        self.detach_btn.set_visible(dead and not busy and self._on_detach is not None)
         bctx = self.mount_btn.get_style_context()
+        self.mount_btn.set_tooltip_text(None)
         if busy:
             self.mount_btn.set_label("Working…")
+        elif dead:
+            self.mount_btn.set_label("Reconnect")
+            self.mount_btn.set_tooltip_text("Detach the dead mount and mount it again "
+                                            "once the server is reachable")
+            bctx.remove_class("mb-btn-unmount")
+            bctx.add_class("mb-btn-mount")
         elif mounted:
             self.mount_btn.set_label("Unmount")
             bctx.remove_class("mb-btn-mount")

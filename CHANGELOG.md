@@ -7,6 +7,36 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/).
 
 ## [Unreleased]
 
+### Added
+- **Dead-mount detection.** Mounted shares are probed (`stat` in a child
+  process with a 3 s timeout, plus a TCP check of the server) after network
+  changes, on resume from suspend (logind `PrepareForSleep`) and every 60 s. A
+  share whose server is gone shows a red dot with **Reconnect** and **Detach**
+  instead of a misleading green "mounted".
+- **Automatic recovery** for auto-mount and the new *Roaming* mounts: the dead
+  mount is force-detached and remounted as soon as its server is reachable
+  again, including after hopping Wi-Fi networks. Password-auth SSHFS mounts
+  (which `reconnect` can't revive) now come back this way too.
+- **Roaming mode** per mount: NFS `softerr,timeo=50,retrans=2`, SMB
+  `echo_interval=10`.
+- Helper: `umount NAME --force` (`umount -f -l`) and `tidy`. Unmounting a
+  share whose server has gone now offers a forced detach instead of hanging
+  until the timeout. Older helpers are handled (falls back to `--lazy`).
+- SSHFS: `ConnectTimeout=10`, so mounting on a network that can't reach the
+  server fails quickly.
+
+### Fixed
+- **Open Folder** could freeze the window on a dead NFS mount (`realpath()`
+  stat'ed the mount root); it now uses `readlink()`.
+- An unexpected error during mount/unmount left the card stuck on "Working…".
+- The GUI gave up (60 s) before the helper did (90 s), so a slow mount could be
+  reported as failed while succeeding, without its `~/mnt` shortcut. The helper
+  now stops at 45 s, and missing shortcuts are recreated for mounted shares.
+- Cleanup of leftovers: empty `/mnt/mountbridge/<user>/<name>` directories are
+  removed after unmount or a failed mount; `~/mnt` shortcuts are removed when a
+  mount is deleted or moved, and stale ones are swept at startup; credential
+  files left in `/run/mountbridge` by a killed helper are removed.
+
 ---
 
 ## [1.4.0] — 2026-10-02
