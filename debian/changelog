@@ -1,3 +1,12 @@
+mountbridge (1.5.0) unstable; urgency=medium
+
+  * New upstream release. Changes are in CHANGELOG.md; notably, dead mounts
+    are detected after network changes and suspend/resume and can be
+    reconnected or detached, with automatic recovery for roaming and
+    auto-mount shares. The helper gains `umount --force` and `tidy`.
+
+ -- Ben <ben@mutefx.net>  Sat, 17 Oct 2026 12:00:00 +0000
+
 mountbridge (1.4.0) unstable; urgency=medium
 
   * New upstream release. Changes are in CHANGELOG.md; notably, mounts can

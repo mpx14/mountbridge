@@ -32,6 +32,7 @@ class MountConfig:
     options:     str           = ""
     auto_mount:  bool          = False
     created_at:  str           = ""
+    roaming:     bool          = False   # fail fast; reconnect after network changes
 
     def to_dict(self):
         return dataclasses.asdict(self)

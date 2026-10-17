@@ -7,7 +7,12 @@ as hostile: this file is the security boundary, not the GUI.
 
 Usage (always via `sudo -n`):
     mountbridge-helper mount  {nfs|nfs4|cifs} SOURCE NAME [OPTIONS]
-    mountbridge-helper umount NAME [--lazy]
+    mountbridge-helper umount NAME [--lazy|--force]
+    mountbridge-helper tidy
+
+    --force (umount -f -l) is for a server that has gone away: it aborts
+    outstanding requests and detaches. tidy removes the caller's empty,
+    unused mountpoint directories.
 
     cifs credentials are read from stdin as `username=`, `password=` and
     `domain=` lines, and never appear on a command line.
@@ -27,11 +32,16 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 
 BASE = "/mnt/mountbridge"
 RUN_DIR = "/run/mountbridge"
 SAFE_ENV = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "LANG": "C"}
 FSTYPES = {"nfs", "nfs4", "cifs"}
+UMOUNT_FLAGS = {None: [], "--lazy": ["-l"], "--force": ["-f", "-l"]}
+RUN_TIMEOUT = 45        # the GUI waits 60 s, so it always hears our answer
+CRED_MAX_AGE = 300      # leftover credential files older than this are removed
+TIDY_MIN_AGE = 600      # tidy leaves mountpoint dirs touched more recently alone
 
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 USER_RE = re.compile(r"^[a-z_][a-z0-9_.-]{0,31}\$?$")
@@ -143,18 +153,74 @@ def parse_creds(text):
 
 # ── Filesystem helpers (root side) ───────────────────────────────────────────
 
-def mounted_at(path):
-    """fstype mounted at path, from mountinfo, without stat'ing anything."""
-    fstype = None
+def mount_table():
+    """{mountpoint: fstype} from mountinfo, without stat'ing anything.
+    The last entry wins for stacked mounts."""
+    table = {}
     with open("/proc/self/mountinfo", encoding="utf-8", errors="surrogateescape") as f:
         for line in f:
             pre, _, post = line.partition(" - ")
             left, right = pre.split(), post.split()
             if len(left) > 4 and right:
                 mp = re.sub(r"\\([0-7]{3})", lambda m: chr(int(m.group(1), 8)), left[4])
-                if mp == path:
-                    fstype = right[0]   # last one wins (stacked mounts)
-    return fstype
+                table[mp] = right[0]
+    return table
+
+
+def mounted_at(path):
+    """fstype mounted at path, or None."""
+    return mount_table().get(path)
+
+
+def remove_mountpoint(target):
+    """Drop an empty mountpoint dir once nothing is mounted on it. rmdir refuses
+    non-empty dirs and never follows symlinks, so this can't remove data."""
+    if mounted_at(target):
+        return
+    try:
+        os.rmdir(target)
+    except OSError:
+        pass  # not empty, already gone, or still in use
+
+
+def sweep_creds(run_dir=RUN_DIR, max_age=CRED_MAX_AGE, now=None):
+    """Remove credential files left by a helper that was killed mid-mount."""
+    now = time.time() if now is None else now
+    try:
+        entries = list(os.scandir(run_dir))
+    except OSError:
+        return
+    for e in entries:
+        try:
+            if (e.name.startswith("cred-") and e.is_file(follow_symlinks=False)
+                    and now - e.stat(follow_symlinks=False).st_mtime > max_age):
+                os.unlink(e.path)
+        except OSError:
+            pass
+
+
+def tidy_dir(directory, mounted, min_age=TIDY_MIN_AGE, now=None):
+    """rmdir every empty, unmounted, not-recently-used mountpoint dir in directory.
+    Returns the names removed."""
+    now = time.time() if now is None else now
+    removed = []
+    try:
+        entries = list(os.scandir(directory))
+    except OSError:
+        return removed
+    for e in entries:
+        if e.path in mounted or not NAME_RE.match(e.name):
+            continue  # check the mount table first: never stat a mountpoint
+        try:
+            if not e.is_dir(follow_symlinks=False):
+                continue
+            if now - e.stat(follow_symlinks=False).st_mtime < min_age:
+                continue  # may be about to be mounted (do_mount touches it)
+            os.rmdir(e.path)
+            removed.append(e.name)
+        except OSError:
+            pass
+    return removed
 
 
 def ensure_root_dir(path, mode=0o755):
@@ -192,7 +258,7 @@ def user_dir(user):
 
 def run(cmd, stdin=None):
     r = subprocess.run(cmd, env=SAFE_ENV, input=stdin, capture_output=True,
-                       text=True, timeout=90)
+                       text=True, timeout=RUN_TIMEOUT)
     sys.stdout.write(r.stdout)
     sys.stderr.write(r.stderr)
     return r.returncode
@@ -211,6 +277,7 @@ def do_mount(fstype, source, name, options, stdin_text):
     if mounted_at(target):
         raise Refused(f"already mounted: {target}")
     ensure_root_dir(target)
+    os.utime(target)  # tells a concurrent `tidy` this dir is in use
 
     cred_path = None
     try:
@@ -218,26 +285,43 @@ def do_mount(fstype, source, name, options, stdin_text):
             body = parse_creds(stdin_text)
             if "username=" in body:
                 ensure_root_dir(RUN_DIR, 0o700)
+                sweep_creds()
                 fd, cred_path = tempfile.mkstemp(dir=RUN_DIR, prefix="cred-")
                 with os.fdopen(fd, "w") as f:
                     f.write(body)
                 opts.append(f"credentials={cred_path}")
             elif "guest" not in opts:
                 opts.append("guest")
-        return run(["mount", "-t", fstype, "-o", ",".join(opts), "--", source, target])
+        rc = run(["mount", "-t", fstype, "-o", ",".join(opts), "--", source, target])
+        if rc != 0:
+            remove_mountpoint(target)  # don't leave an empty dir behind a failed mount
+        return rc
     finally:
         if cred_path:
             os.unlink(cred_path)
 
 
-def do_umount(name, lazy):
+def do_umount(name, mode=None):
+    if mode not in UMOUNT_FLAGS:
+        raise Refused("usage: umount NAME [--lazy|--force]")
     _, _, user = caller()
     check_name(name)
     target = os.path.join(BASE, user, name)
     fstype = mounted_at(target)
     if fstype not in FSTYPES:
         raise Refused(f"no nfs/cifs mount at {target}")
-    return run(["umount"] + (["-l"] if lazy else []) + ["--", target])
+    rc = run(["umount"] + UMOUNT_FLAGS[mode] + ["--", target])
+    if rc == 0:
+        remove_mountpoint(target)
+    return rc
+
+
+def do_tidy():
+    _, _, user = caller()
+    d = user_dir(user)
+    for name in tidy_dir(d, set(mount_table())):
+        print(f"removed unused mountpoint {os.path.join(d, name)}")
+    return 0
 
 
 def main(argv):
@@ -248,10 +332,11 @@ def main(argv):
             opts = argv[4] if len(argv) == 5 else ""
             return do_mount(argv[1], argv[2], argv[3], opts, stdin_text)
         if len(argv) in (2, 3) and argv[0] == "umount":
-            if len(argv) == 3 and argv[2] != "--lazy":
-                raise Refused("usage: umount NAME [--lazy]")
-            return do_umount(argv[1], len(argv) == 3)
-        raise Refused("usage: mount {nfs|nfs4|cifs} SOURCE NAME [OPTIONS] | umount NAME [--lazy]")
+            return do_umount(argv[1], argv[2] if len(argv) == 3 else None)
+        if argv == ["tidy"]:
+            return do_tidy()
+        raise Refused("usage: mount {nfs|nfs4|cifs} SOURCE NAME [OPTIONS] | "
+                      "umount NAME [--lazy|--force] | tidy")
     except Refused as e:
         print(f"mountbridge-helper: {e}", file=sys.stderr)
         return 2

@@ -29,7 +29,7 @@ from . import ops as ops_mod
 from .constants import APP_ID, APP_NAME, APP_VERSION, CSS
 from .discovery import Discovery
 from .models import LiveMount, MountConfig, MountType
-from .ops import LiveMountScanner, MountOps, mounted_paths
+from .ops import LiveMountScanner, MountOps, is_dead_error, mounted_paths
 from .parsing import read_mounts, valid_host
 from .store import ConfigStore, CredentialError, CredentialStore
 from .widgets import (
@@ -79,12 +79,17 @@ class MainWindow(Gtk.ApplicationWindow):
         self._cards: Dict[str, MountCard] = {}
         self._unmanaged_key: tuple = ()
         self._refresh_queued = False
+        self._dead: Set[str] = set()                 # mounted, but the server isn't answering
+        self._pending: Set[str] = set()              # detached; remount once the server is back
+        self._health_running = False
+        self._health_timer = 0
 
         self._apply_css()
         self._build()
         self._populate()
         self._watch_mounts()
-        self._auto_mount()
+        self._watch_network()
+        self._startup_cleanup()                      # runs _auto_mount when done
         if cfg.load_warning:
             GLib.idle_add(self._error_dialog, "Configuration reset", cfg.load_warning)
 
@@ -277,10 +282,11 @@ class MainWindow(Gtk.ApplicationWindow):
 
         entries = read_mounts()
         mounted = mounted_paths(entries)
+        self._forget_unmounted_dead(mounted)
         for m in self.cfg.mounts:
             card = MountCard(m, self._toggle, self._open, self._do_edit, self._do_delete,
-                             self._bookmark, self._is_bookmarked(m))
-            card.update(self.ops.is_mounted(m, mounted), m.id in self._busy)
+                             self._bookmark, self._is_bookmarked(m), on_detach=self._detach)
+            card.update(self.ops.is_mounted(m, mounted), m.id in self._busy, m.id in self._dead)
             self._cards[m.id] = card
             self.lb.add(card)
 
@@ -306,12 +312,20 @@ class MainWindow(Gtk.ApplicationWindow):
         if tuple(sorted(lm.local_path for lm in unmanaged)) != self._unmanaged_key:
             self._populate()
             return False
+        self._forget_unmounted_dead(mounted)
         for m in self.cfg.mounts:
+            is_on = self.ops.is_mounted(m, mounted)
+            if is_on and m.id not in self._busy and m.id not in self._dead:
+                self.ops.ensure_link(m)  # lstat/readlink of ~/mnt only; never the mount
             card = self._cards.get(m.id)
             if card:
-                card.update(self.ops.is_mounted(m, mounted), m.id in self._busy)
+                card.update(is_on, m.id in self._busy, m.id in self._dead)
         self._update_counts(mounted, unmanaged)
         return False
+
+    def _forget_unmounted_dead(self, mounted: Set[str]):
+        self._dead = {m.id for m in self.cfg.mounts
+                      if m.id in self._dead and self.ops.is_mounted(m, mounted)}
 
     def _queue_refresh(self, *_):
         if not self._refresh_queued:
@@ -370,13 +384,16 @@ class MainWindow(Gtk.ApplicationWindow):
         total = counts["all"]
         self.status_lbl.set_text(
             f"  {active} of {total} mount{'s' if total != 1 else ''} active"
+            + (f"  •  {len(self._dead)} not responding" if self._dead else "")
+            + (f"  •  {len(self._pending)} waiting for network" if self._pending else "")
             + (f"  •  {len(unmanaged)} unmanaged" if unmanaged else "")
         )
 
     # ── Mount operations (all run off the main thread) ───────────────────────
 
-    def _run_op(self, m: MountConfig, action: str, lazy: bool = False,
+    def _run_op(self, m: MountConfig, action: str, lazy: bool = False, force: bool = False,
                 then: Optional[Callable[[bool], None]] = None, notify_ok: bool = True):
+        """action: mount | unmount | reconnect (force-detach, then mount if reachable)."""
         if m.id in self._busy:
             return
         self._busy.add(m.id)
@@ -385,25 +402,47 @@ class MainWindow(Gtk.ApplicationWindow):
             card.update(self.ops.is_mounted(m), busy=True)
 
         def work():
-            if action == "mount":
-                ok, msg = self.ops.mount(m)
-            else:
-                ok, msg = self.ops.unmount(m, lazy=lazy)
-            GLib.idle_add(self._op_done, m, action, lazy, ok, msg, then, notify_ok)
+            try:
+                if action == "mount":
+                    ok, msg = self.ops.mount(m)
+                elif action == "reconnect":
+                    ok, msg = self.ops.reconnect(m)
+                else:
+                    ok, msg = self.ops.unmount(m, lazy=lazy, force=force)
+            except Exception as e:  # never leave the card stuck on "Working…"
+                ok, msg = False, f"Unexpected error: {e}"
+            GLib.idle_add(self._op_done, m, action, lazy or force, ok, msg, then, notify_ok)
 
         threading.Thread(target=work, daemon=True).start()
 
-    def _op_done(self, m, action, lazy, ok, msg, then, notify_ok):
+    def _op_done(self, m, action, detached, ok, msg, then, notify_ok):
         self._busy.discard(m.id)
+        if action == "mount":
+            self._pending.discard(m.id)  # one attempt per network change; errors are reported
+        elif ok:
+            self._dead.discard(m.id)
+        if action == "reconnect" and msg == ops_mod.SERVER_UNREACHABLE:
+            self._dead.discard(m.id)
+            self._pending.add(m.id)
         self._queue_refresh()
-        if not ok and action == "unmount" and not lazy and "busy" in msg.lower():
-            if self._confirm(f'"{m.name}" is busy',
-                             "Files on it are still open. Detach it now anyway (lazy unmount)? "
-                             "It will finish unmounting once the files are closed."):
-                self._run_op(m, "unmount", lazy=True, then=then, notify_ok=notify_ok)
-                return False
+        if not ok and action == "unmount" and not detached:
+            if "busy" in msg.lower():
+                if self._confirm(f'"{m.name}" is busy',
+                                 "Files on it are still open. Detach it now anyway (lazy "
+                                 "unmount)? It will finish unmounting once the files are "
+                                 "closed."):
+                    self._run_op(m, "unmount", lazy=True, then=then, notify_ok=notify_ok)
+                    return False
+            elif is_dead_error(msg):
+                if self._confirm(f'"{m.name}" is not responding',
+                                 "The server can't be reached, so a normal unmount can't "
+                                 "finish. Force-detach it now? Changes not yet written to "
+                                 "the server will be lost."):
+                    self._run_op(m, "unmount", force=True, then=then, notify_ok=notify_ok)
+                    return False
         if not ok or notify_ok:
-            verb = "Mounted" if action == "mount" else "Unmounted"
+            verb = {"mount": "Mounted", "unmount": "Unmounted",
+                    "reconnect": "Reconnected"}[action]
             notify(m.name, verb if ok and msg == "OK" else msg, ok)
         if not ok:
             self.status_lbl.set_text(f"  {m.name}: {msg.splitlines()[0] if msg else 'failed'}")
@@ -412,6 +451,10 @@ class MainWindow(Gtk.ApplicationWindow):
         return False
 
     def _toggle(self, m: MountConfig):
+        self._pending.discard(m.id)  # the user has taken over
+        if m.id in self._dead:
+            self._run_op(m, "reconnect")
+            return
         if self.ops.is_mounted(m):
             self._run_op(m, "unmount")
             return
@@ -421,6 +464,13 @@ class MainWindow(Gtk.ApplicationWindow):
                 self._access_dialog(state)
                 return
         self._run_op(m, "mount")
+
+    def _detach(self, m: MountConfig):
+        self._pending.discard(m.id)
+        if self._confirm(f'Detach "{m.name}"?',
+                         "Force-detach this unresponsive mount without reconnecting? "
+                         "Changes not yet written to the server will be lost."):
+            self._run_op(m, "unmount", force=True)
 
     def _access_dialog(self, state: str):
         """Explain missing NFS/SMB access and offer to fix it (administrator password)."""
@@ -493,7 +543,11 @@ class MainWindow(Gtk.ApplicationWindow):
 
     def _open(self, m: MountConfig):
         link, real = os.path.expanduser(m.local_path), self.ops.mountpoint(m)
-        self._open_path(link if os.path.realpath(link) == real else real)
+        try:
+            target = os.readlink(link)  # not realpath(): that stats the mount root,
+        except OSError:                 # which hangs on a dead hard NFS mount
+            target = None
+        self._open_path(link if target == real else real)
 
     def _open_path(self, path: str):
         """Open a folder in the file manager, reporting unreachable mounts instead of
@@ -528,14 +582,22 @@ class MainWindow(Gtk.ApplicationWindow):
         threading.Thread(target=check, daemon=True).start()
         GLib.timeout_add_seconds(5, lambda: finish("Not responding after 5 seconds"))
 
-    def _unmount_live(self, card: UnmanagedMountCard):
+    def _unmount_live(self, card: UnmanagedMountCard, force: bool = False):
         card.set_busy(True)
 
         def work():
-            ok, msg = self.ops.unmount_live(card.lm)
+            try:
+                ok, msg = self.ops.unmount_live(card.lm, force=force)
+            except Exception as e:
+                ok, msg = False, f"Unexpected error: {e}"
             GLib.idle_add(done, ok, msg)
 
         def done(ok, msg):
+            if not ok and not force and is_dead_error(msg) and self._confirm(
+                    f"{card.lm.local_path} is not responding",
+                    "Force-detach it? Changes not yet written to the server will be lost."):
+                self._unmount_live(card, force=True)
+                return False
             notify(card.lm.host, "Unmounted" if ok else msg, ok)
             if not ok:
                 self._error_dialog("Unmount failed", msg)
@@ -547,23 +609,122 @@ class MainWindow(Gtk.ApplicationWindow):
     def _auto_mount(self):
         pending = [m for m in self.cfg.mounts if m.auto_mount and not self.ops.is_mounted(m)]
         if not pending:
-            return
-        net = Gio.NetworkMonitor.get_default()
-
-        def go():
+            return False
+        if Gio.NetworkMonitor.get_default().get_network_available():
             for m in pending:
                 self._run_op(m, "mount", notify_ok=False)
+        else:
+            # The network watcher mounts these once their server answers.
+            self._pending.update(m.id for m in pending)
+            self._queue_refresh()
+        return False
 
-        if net.get_network_available():
-            go()
+    def _startup_cleanup(self):
+        """Remove ~/mnt shortcuts and empty mountpoint dirs left by deleted or renamed
+        mounts and older versions, then auto-mount. Best effort throughout."""
+        try:
+            for path in self.ops.sweep_links(self._known_paths()):
+                print(f"[cleanup] removed stale shortcut {path}", file=sys.stderr)
+        except OSError:
+            pass
+        if not any(m.mount_type != MountType.SSHFS for m in self.cfg.mounts):
+            self._auto_mount()
             return
 
-        def changed(mon, available):
-            if available:
-                mon.disconnect(handler)
-                go()
+        def work():
+            try:
+                self.ops.tidy()  # before auto-mount, so it can't race a new mount
+            except Exception as e:
+                print(f"[cleanup] tidy failed: {e}", file=sys.stderr)
+            GLib.idle_add(self._auto_mount)
 
-        handler = net.connect("network-changed", changed)
+        threading.Thread(target=work, daemon=True).start()
+
+    # ── Health: dead mounts after Wi-Fi hops and suspend/resume ──────────────
+
+    def _watch_network(self):
+        Gio.NetworkMonitor.get_default().connect(
+            "network-changed", lambda *_: self._schedule_health(4))
+        self._sysbus = None
+        try:
+            self._sysbus = Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+            self._sysbus.signal_subscribe(
+                "org.freedesktop.login1", "org.freedesktop.login1.Manager",
+                "PrepareForSleep", "/org/freedesktop/login1", None,
+                Gio.DBusSignalFlags.NONE, self._on_prepare_for_sleep)
+        except GLib.Error as e:
+            print(f"[health] no logind resume signal: {e.message}", file=sys.stderr)
+        # Catch what the signals miss (e.g. the server itself went away).
+        GLib.timeout_add_seconds(60, lambda: self._health_check() or True)
+
+    def _on_prepare_for_sleep(self, _conn, _sender, _path, _iface, _signal, params, *_):
+        if not params.unpack()[0]:      # False = resuming
+            self._schedule_health(6)    # give Wi-Fi time to reassociate
+
+    def _schedule_health(self, delay: int):
+        """Debounced: one Wi-Fi hop fires several network-changed events."""
+        if self._health_timer:
+            GLib.source_remove(self._health_timer)
+        self._health_timer = GLib.timeout_add_seconds(delay, self._health_fired)
+
+    def _health_fired(self):
+        self._health_timer = 0
+        self._health_check()
+        return False
+
+    def _health_check(self):
+        """Probe mounted shares, and servers of pending remounts, off the main thread."""
+        if self._health_running:
+            return False
+        mounted = mounted_paths()
+        live = [m for m in self.cfg.mounts
+                if m.id not in self._busy and self.ops.is_mounted(m, mounted)]
+        waiting = [m for m in self.cfg.mounts
+                   if m.id in self._pending and m.id not in self._busy
+                   and not self.ops.is_mounted(m, mounted)]
+        if not live and not waiting:
+            return False
+        self._health_running = True
+
+        def work():
+            dead: Set[str] = set()
+            reachable: Set[str] = set()
+            try:
+                for m in live:
+                    if not self.ops.probe(m):
+                        dead.add(m.id)
+                for m in waiting:
+                    if self.ops.server_reachable(m):
+                        reachable.add(m.id)
+            except Exception as e:
+                print(f"[health] check failed: {e}", file=sys.stderr)
+            GLib.idle_add(self._health_done, {m.id for m in live}, dead, reachable)
+
+        threading.Thread(target=work, daemon=True).start()
+        return False
+
+    def _health_done(self, checked: Set[str], dead: Set[str], reachable: Set[str]):
+        self._health_running = False
+        newly_dead = dead - self._dead
+        self._dead = (self._dead - checked) | dead
+        by_id = {m.id: m for m in self.cfg.mounts}
+        for mid in sorted(dead):
+            m = by_id.get(mid)
+            if m is None or mid in self._busy:
+                continue
+            if m.auto_mount or m.roaming:
+                self._run_op(m, "reconnect", notify_ok=False)
+            elif mid in newly_dead:
+                notify(m.name, "The server is not responding. Reconnect or detach it "
+                               "in MountBridge.", False)
+        for mid in list(self._pending):
+            m = by_id.get(mid)
+            if m is None:
+                self._pending.discard(mid)
+            elif mid in reachable and mid not in self._busy and not self.ops.is_mounted(m):
+                self._run_op(m, "mount")
+        self._queue_refresh()
+        return False
 
     # ── Dialog helpers ───────────────────────────────────────────────────────
 
@@ -624,6 +785,7 @@ class MainWindow(Gtk.ApplicationWindow):
             ssh_key=v["ssh_key"],
             options=v["options"],
             auto_mount=v["auto_mount"],
+            roaming=v["roaming"],
             created_at=datetime.now().isoformat(timespec="seconds"),
         )
 
@@ -705,10 +867,12 @@ class MainWindow(Gtk.ApplicationWindow):
         old_path, old_name = mount.local_path, mount.name
         had_bookmark = self._is_bookmarked(mount)
         for k in ("name", "mount_type", "host", "remote_path", "username", "domain",
-                  "port", "ssh_key", "options", "auto_mount"):
+                  "port", "ssh_key", "options", "auto_mount", "roaming"):
             setattr(mount, k, v[k])
         mount.local_path = v["local_path"] or mount.local_path
         self.cfg.update(mount)
+        if os.path.expanduser(old_path) != os.path.expanduser(mount.local_path):
+            self.ops.remove_link(old_path)  # shortcut to the old mountpoint
         if had_bookmark and (mount.local_path, mount.name) != (old_path, old_name):
             self._drop_bookmark(old_path)
             try:
@@ -737,6 +901,8 @@ class MainWindow(Gtk.ApplicationWindow):
             self.creds.delete(mount.id)
             self.cfg.delete(mount.id)
             self._drop_bookmark(mount.local_path)
+            self.ops.remove_link(mount.local_path)
+            self._pending.discard(mount.id)
             self._populate()
 
         if self.ops.is_mounted(mount):
