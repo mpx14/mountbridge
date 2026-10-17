@@ -94,8 +94,8 @@ disagree:
 
 Also add a `## [X.Y.Z]` section to `CHANGELOG.md`, and update the project page
 `site/index.html` (version, download links, "New in" line); the same test fails
-if its version is stale. The page is deployed by hand after the release is
-published: `scp site/index.html <server>:/var/www/html/mountbridge/`.
+if its version is stale. The maintainer deploys it by hand once the release is
+published.
 
 Pushing a `vX.Y.Z` tag makes
 CI build and install-test the `.deb` and attach it to a **draft** GitHub
